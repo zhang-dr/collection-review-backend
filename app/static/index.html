@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Collection Network Review</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="top">
+  <div>
+    <h1>Collection Network Review <span style="font-weight:400;color:#aab0b6;">揽收网络复盘工具</span></h1>
+    <div class="sub">Upload → auto-compute → weekly diagnostic 上传数据自动生成周度诊断报告</div>
+  </div>
+  <nav class="tabs">
+    <button data-view="upload" class="active">上传数据 Upload</button>
+    <button data-view="report">报告 Report</button>
+    <button data-view="history">历史 History</button>
+  </nav>
+</header>
+
+<div class="wrap">
+
+  <div id="msgbox"></div>
+
+  <!-- ==================== UPLOAD VIEW ==================== -->
+  <section id="view-upload" class="view active">
+    <div class="panel">
+      <h3>基本信息 <span class="cn">Report basics</span></h3>
+      <div class="grid3">
+        <div class="field"><label>日期A（较早）<span class="cn">Date A (earlier)</span></label><input type="date" id="f-date-a"></div>
+        <div class="field"><label>日期B（较晚）<span class="cn">Date B (later)</span></label><input type="date" id="f-date-b"></div>
+        <div class="field"><label>报告名称 <span class="cn">Report name — auto-generated from dates, editable</span></label><input type="text" id="f-name" placeholder="选择日期后自动生成 / auto-fills once dates are picked"></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h3>各仓 Route Info 文件 <span class="cn">Per-depot route-info CSVs — 3仓 × 2日期 = 6个文件</span></h3>
+      <div class="grid3" id="route-file-grid"></div>
+    </div>
+
+    <div class="panel">
+      <h3>Billing 结算文件 <span class="cn">Network-wide billing CSV — 每个日期1个文件，覆盖三仓。可直接拖拽文件到框内 / drag & drop supported</span></h3>
+      <div class="grid2">
+        <div class="field dropzone"><label>日期A Billing</label><input type="file" id="f-billing-a" accept=".csv"><div class="dropzone-hint">拖拽到此处，或点击选择 Drag & drop, or click to browse</div></div>
+        <div class="field dropzone"><label>日期B Billing</label><input type="file" id="f-billing-b" accept=".csv"><div class="dropzone-hint">拖拽到此处，或点击选择 Drag & drop, or click to browse</div></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h3>OPC 修正后实际揽收量 <span class="cn">OPC-corrected actual pickup — 手动填写，3仓 × 2日期</span></h3>
+      <div class="grid3" id="opc-grid"></div>
+    </div>
+
+    <div class="panel">
+      <h3>AB Scan 差异修正 <span class="cn">AB-scan overrides — 可选，逐条添加</span></h3>
+      <div id="ab-rows"></div>
+      <button class="secondary small" id="btn-add-ab" type="button">+ 添加一条 Add row</button>
+    </div>
+
+    <button class="primary" id="btn-submit">生成报告 Generate report</button>
+    <span id="submit-status" style="margin-left:12px;font-size:12.5px;color:var(--muted);"></span>
+  </section>
+
+  <!-- ==================== REPORT VIEW ==================== -->
+  <section id="view-report" class="view">
+    <div id="report-empty" class="panel">还没有报告 — 请先上传数据，或从"历史"里选一份。<span class="cn" style="display:block;margin-top:4px;">No report loaded yet — upload data, or pick one from History.</span></div>
+    <div id="report-content" style="display:none;"></div>
+  </section>
+
+  <!-- ==================== HISTORY VIEW ==================== -->
+  <section id="view-history" class="view">
+    <div class="panel">
+      <h3>历史报告 <span class="cn">Saved weekly reports</span></h3>
+      <div id="history-list"></div>
+    </div>
+  </section>
+
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
