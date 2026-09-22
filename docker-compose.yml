@@ -1,0 +1,11 @@
+services:
+  collection-review:
+    build: .
+    image: collection-review-app:latest
+    container_name: collection-review-app
+    restart: unless-stopped
+    ports:
+      - "8811:8811"
+    volumes:
+      # Persist the SQLite report history outside the container.
+      - ./data:/app/data
