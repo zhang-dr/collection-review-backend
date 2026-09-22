@@ -22,7 +22,12 @@ a{color:inherit;}
 
 header.top{background:var(--ink);color:var(--paper);padding:20px clamp(16px,3vw,40px);border-bottom:5px solid var(--accent);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:14px;}
 header.top h1{font-size:19px;margin:0;font-weight:600;}
+header.top h1 .cn-title{font-weight:400;color:#aab0b6;}
 header.top .sub{font-size:11.5px;color:#aab0b6;margin-top:2px;}
+@media (max-width:480px){
+  header.top h1{font-size:16px;}
+  header.top h1 .cn-title{display:block;font-size:13.5px;margin-top:2px;}
+}
 nav.tabs{display:flex;gap:4px;}
 nav.tabs button{background:transparent;border:1px solid rgba(255,255,255,.2);color:#d8d5cb;padding:7px 14px;border-radius:5px;cursor:pointer;font-size:12.5px;font-weight:600;}
 nav.tabs button.active{background:var(--accent);border-color:var(--accent);color:#fff;}
@@ -31,39 +36,55 @@ nav.tabs button.active{background:var(--accent);border-color:var(--accent);color
 .view{display:none;}
 .view.active{display:block;}
 
-.panel{background:var(--panel);border:1px solid var(--line);padding:18px 19px;border-radius:5px;box-shadow:var(--shadow);margin-bottom:18px;}
-.panel h3{font-size:14px;margin:0 0 12px;font-weight:600;}
-.panel h3 .cn{display:block;font-size:11.5px;font-weight:500;color:var(--muted);margin-top:2px;}
+.panel{background:var(--panel);border:1px solid var(--line);padding:22px 24px 24px;border-radius:9px;box-shadow:var(--shadow);margin-bottom:22px;}
+.panel h3{font-size:15px;margin:0 0 15px;font-weight:600;display:flex;align-items:flex-start;gap:11px;}
+.panel h3 .cn{display:block;font-size:11.5px;font-weight:500;color:var(--muted);margin-top:3px;}
+.stepnum{display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;width:23px;height:23px;border-radius:50%;background:var(--accent);color:#fff;font-size:11.5px;font-weight:700;font-family:Inter,sans-serif;margin-top:1px;}
 
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
 .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;}
 @media (max-width:900px){.grid2,.grid3{grid-template-columns:1fr;}}
 
-label{display:block;font-size:12px;font-weight:600;color:var(--ink-soft);margin-bottom:5px;}
+label{display:block;font-size:12px;font-weight:600;color:var(--ink-soft);margin-bottom:6px;}
 label .cn{font-weight:500;color:var(--muted);}
 input[type=text], input[type=number], input[type=date]{
-  width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:4px;background:var(--paper);color:var(--ink);font-size:13px;
+  width:100%;padding:9px 11px;border:1px solid var(--line);border-radius:5px;background:var(--paper);color:var(--ink);font-size:13px;transition:border-color .15s,box-shadow .15s;
 }
-input[type=file]{width:100%;font-size:12px;}
+input[type=text]:focus, input[type=number]:focus, input[type=date]:focus{
+  outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft);
+}
 input[type=date]{color-scheme:light;}
 @media (prefers-color-scheme: dark){:root:not([data-theme="light"]) input[type=date]{color-scheme:dark;}}
 :root[data-theme="dark"] input[type=date]{color-scheme:dark;}
-.field{margin-bottom:14px;}
-.field.dropzone{border:1.5px dashed var(--line);border-radius:6px;padding:10px 10px 8px;transition:border-color .15s,background-color .15s;}
-.field.dropzone input[type=file]{cursor:pointer;}
-.field.dropzone .dropzone-hint{font-size:10.5px;color:var(--muted);margin-top:5px;}
-.field.dropzone.dragover{border-color:var(--accent);background:var(--accent-soft);}
-.field.dropzone.filled{border-style:solid;border-color:var(--good);}
-.field.dropzone.filled .dropzone-hint{color:var(--good);}
-.filegroup{border:1px dashed var(--line);border-radius:6px;padding:12px;margin-bottom:10px;}
-.filegroup .depot-tag{display:inline-block;padding:2px 8px;border-radius:3px;font-size:11px;font-weight:700;margin-bottom:8px;}
+.field{margin-bottom:15px;}
+
+/* -------- file picker: the whole card is one giant clickable/droppable
+   input (an absolutely-positioned <input type=file> covers the entire
+   visual box), so there is no dead zone that looks clickable but isn't. -------- */
+.filepick{position:relative;}
+.filepick-input{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer;z-index:2;margin:0;}
+.filepick-visual{border:1.75px dashed var(--line);border-radius:8px;padding:20px 14px 16px;display:flex;flex-direction:column;align-items:center;gap:3px;text-align:center;background:var(--paper);transition:border-color .15s,background-color .15s;}
+.filepick-icon{width:21px;height:21px;color:var(--muted);margin-bottom:3px;transition:color .15s;}
+.filepick-text strong{display:block;font-size:12px;color:var(--ink-soft);font-weight:600;line-height:1.4;}
+.filepick-text span{display:block;font-size:10px;color:var(--muted);margin-top:2px;}
+.filepick-chosen{font-size:11px;font-weight:700;color:var(--good);margin-top:6px;word-break:break-all;line-height:1.4;}
+.dropzone.dragover .filepick-visual{border-color:var(--accent);background:var(--accent-soft);}
+.dropzone.dragover .filepick-icon{color:var(--accent);}
+.dropzone.filled .filepick-visual{border-style:solid;border-color:var(--good);background:var(--good-soft);}
+.dropzone.filled .filepick-icon{color:var(--good);}
+
+.filegroup{border:1px solid var(--line);border-radius:8px;padding:14px;margin-bottom:10px;background:var(--paper);}
+.filegroup .depot-tag{display:inline-block;padding:2px 8px;border-radius:3px;font-size:11px;font-weight:700;margin-bottom:10px;}
 .depot-tag.mcr{background:var(--mcr-soft);color:var(--mcr);}
 .depot-tag.bham{background:var(--bham-soft);color:var(--bham);}
 .depot-tag.ldn{background:var(--ldn-soft);color:var(--ldn);}
 
-button.primary{background:var(--accent);color:#fff;border:none;padding:10px 20px;border-radius:5px;font-size:13.5px;font-weight:700;cursor:pointer;}
-button.primary:disabled{opacity:.5;cursor:not-allowed;}
-button.secondary{background:transparent;border:1px solid var(--line);color:var(--ink-soft);padding:7px 12px;border-radius:5px;font-size:12px;cursor:pointer;font-weight:600;}
+button.primary{background:var(--accent);color:#fff;border:none;padding:13px 26px;border-radius:6px;font-size:14px;font-weight:700;cursor:pointer;box-shadow:0 1px 3px rgba(193,89,46,.35);transition:background-color .15s,box-shadow .15s,transform .1s;}
+button.primary:hover:not(:disabled){background:#a84a24;box-shadow:0 2px 6px rgba(193,89,46,.45);}
+button.primary:active:not(:disabled){transform:translateY(1px);}
+button.primary:disabled{opacity:.5;cursor:not-allowed;box-shadow:none;}
+button.secondary{background:transparent;border:1px solid var(--line);color:var(--ink-soft);padding:7px 12px;border-radius:5px;font-size:12px;cursor:pointer;font-weight:600;transition:border-color .15s,color .15s;}
+button.secondary:hover{border-color:var(--accent);color:var(--accent);}
 button.small{padding:4px 9px;font-size:11px;}
 
 table{width:100%;border-collapse:collapse;font-size:12px;}
