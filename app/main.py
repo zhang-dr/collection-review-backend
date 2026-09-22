@@ -1,9 +1,12 @@
 import json
+import os
+import secrets
+from base64 import b64decode
 from pathlib import Path
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import db
@@ -11,6 +14,36 @@ from .pipeline import AbScanOverride, ComputeInputs, DepotDateInput, compute_rep
 
 app = FastAPI(title="Collection Network Review")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+
+@app.middleware("http")
+async def basic_auth(request: Request, call_next):
+    # Keep the health check public so Railway can monitor the service.
+    if request.url.path == "/api/health":
+        return await call_next(request)
+
+    expected_user = os.getenv("AUTH_USERNAME")
+    expected_password = os.getenv("AUTH_PASSWORD")
+    if expected_user and expected_password:
+        try:
+            scheme, encoded = request.headers.get("Authorization", "").split(" ", 1)
+            username, password = b64decode(encoded).decode("utf-8").split(":", 1)
+            valid = (
+                scheme.lower() == "basic"
+                and secrets.compare_digest(username, expected_user)
+                and secrets.compare_digest(password, expected_password)
+            )
+        except (ValueError, UnicodeDecodeError):
+            valid = False
+
+        if not valid:
+            return JSONResponse(
+                {"detail": "Authentication required"},
+                status_code=401,
+                headers={"WWW-Authenticate": 'Basic realm="CBT Analysis"'},
+            )
+
+    return await call_next(request)
 
 db.init_db()
 
