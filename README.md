@@ -1,1 +1,156 @@
-IyBDb2xsZWN0aW9uIE5ldHdvcmsgUmV2aWV3IOaPveaUtue9kee7nOWkjeebmOW3peWFtwoKVXBsb2FkIHRoZSBwZXItZGVwb3Qgcm91dGUtaW5mbyBDU1ZzLCB0aGUgbmV0d29yayBiaWxsaW5nIENTVnMsIE9QQy1jb3JyZWN0ZWQKdG90YWxzLCBhbmQgYW55IEFCLXNjYW4gb3ZlcnJpZGVzIOKAlCB0aGUgYXBwIHJlY29tcHV0ZXMgdGhlIHNhbWUgd2Vla2x5CmRpYWdub3N0aWMgdGhhdCB3YXMgcHJldmlvdXNseSBidWlsdCBieSBoYW5kLCBhbmQga2VlcHMgYSBoaXN0b3J5IG9mIGV2ZXJ5CnJlcG9ydCBnZW5lcmF0ZWQuCgpDb3JlIHYxIHNjb3BlOiBvdmVyYWxsIHJldmlldyB0YWJsZSwgZm9yZWNhc3QtdnMtYWN0dWFsLCBjYW5jZWxsYXRpb24KYW5hbHlzaXMsIGFuZCBjb3N0IGFuYWx5c2lzICjCoy9wYXJjZWwgKyBwcmlvcml0eSByb3V0ZXMgZm9yIHJldmlldykuIFZlaGljbGUKbWl4ICjCpzA0IGluIHRoZSBtYW51YWwgcmVwb3J0IHNlcmllcykgaXMgbm90IGluIHRoaXMgdmVyc2lvbi4KCiMjIFdoYXQncyBpbnNpZGUKCmBgYApiYWNrZW5kLwogIGFwcC8KICAgIG1haW4ucHkgICAgICAgRmFzdEFQSSBhcHA6IC9hcGkvdXBsb2FkLCAvYXBpL3JlcG9ydHMsIC9hcGkvcmVwb3J0cy97aWR9CiAgICBwaXBlbGluZS5weSAgICBBbGwgdGhlIGJ1c2luZXNzIGxvZ2ljIChPUEMvQUItc2NhbiBoYW5kbGluZywgY29zdCBjYWxjcywKICAgICAgICAgICAgICAgICAgIGZvcmVjYXN0IGRldmlhdGlvbiwgY2FuY2VsbGF0aW9uIGFuYWx5c2lzLCBwZXJjZW50aWxlLWJhc2VkCiAgICAgICAgICAgICAgICAgICBwcmlvcml0eS1yb3V0ZSBmbGFnZ2luZywgcmVwZWF0LWRyaXZlciBkZXRlY3Rpb24pCiAgICBkYi5weSAgICAgICAgICBTUUxpdGUgcGVyc2lzdGVuY2UgKGRhdGEvcmVwb3J0cy5kYikKICAgIHN0YXRpYy8gICAgICAgIEZyb250ZW5kIOKAlCBwbGFpbiBIVE1ML0NTUy9KUywgemVybyBidWlsZCBzdGVwLCB6ZXJvCiAgICAgICAgICAgICAgICAgICBleHRlcm5hbCBkZXBlbmRlbmNpZXMgKGFsbCBjaGFydHMgYXJlIG5hdGl2ZSBDU1MvaW5saW5lIFNWRykKICByZXF1aXJlbWVudHMudHh0CiAgRG9ja2VyZmlsZQogIGRvY2tlci1jb21wb3NlLnltbApgYGAKClRoZXJlIGlzIG5vIGJ1aWxkIHN0ZXAgYW5kIG5vIEpTIGZyYW1ld29yayDigJQgYHN0YXRpYy9hcHAuanNgIGlzIGxvYWRlZApkaXJlY3RseSBieSB0aGUgYnJvd3NlciwgYW5kIGl0IHJlbmRlcnMgdGhlIHJlcG9ydCBmcm9tIHdoYXRldmVyIEpTT04KYC9hcGkvdXBsb2FkYCBvciBgL2FwaS9yZXBvcnRzL3tpZH1gIHJldHVybnMuCgojIyBSdW4gaXQgbG9jYWxseQoKYGBgYmFzaApjZCBiYWNrZW5kCnB5dGhvbjMgLW0gdmVudiAudmVudiAmJiBzb3VyY2UgLnZlbnYvYmluL2FjdGl2YXRlCnBpcCBpbnN0YWxsIC1yIHJlcXVpcmVtZW50cy50eHQKdXZpY29ybiBhcHAubWFpbjphcHAgLS1ob3N0IDAuMC4wLjAgLS1wb3J0IDg4MTEKYGBgCgpPcGVuIGBodHRwOi8vbG9jYWxob3N0Ojg4MTEvYC4gUmVwb3J0IGhpc3RvcnkgaXMgc3RvcmVkIGluCmBiYWNrZW5kL2RhdGEvcmVwb3J0cy5kYmAgKGNyZWF0ZWQgYXV0b21hdGljYWxseSBvbiBmaXJzdCBydW4pLgoKIyMgUnVuIGl0IHdpdGggRG9ja2VyCgpgYGBiYXNoCmNkIGJhY2tlbmQKZG9ja2VyIGNvbXBvc2UgdXAgLWQgLS1idWlsZApgYGAKClRoaXMgYnVpbGRzIHRoZSBpbWFnZSwgc3RhcnRzIHRoZSBjb250YWluZXIgb24gcG9ydCA4ODExLCBhbmQgcGVyc2lzdHMKYGRhdGEvcmVwb3J0cy5kYmAgdG8gYC4vZGF0YWAgb24gdGhlIGhvc3Qgc28gaGlzdG9yeSBzdXJ2aXZlcyByZWJ1aWxkcy4KCiMjIERlcGxveWluZyB0byB5b3VyIG93biBkb21haW4KClRoaXMgaXMgYSBwbGFpbiBGYXN0QVBJL3V2aWNvcm4gYXBwLCBzbyBpdCBkZXBsb3lzIHRoZSBzYW1lIHdheSBhcyBhbnkgb3RoZXIKUHl0aG9uIHdlYiBzZXJ2aWNlLiBUd28gY29tbW9uIHBhdHRlcm5zIOKAlCBwaWNrIHdoaWNoZXZlciBtYXRjaGVzIGhvdyB5b3UKYWxyZWFkeSBob3N0IHRoaW5nczoKCiMjIyBPcHRpb24gQSDigJQgRG9ja2VyICsgcmV2ZXJzZSBwcm94eSAocmVjb21tZW5kZWQgaWYgeW91J3JlIG5vdCBzdXJlKQoKMS4gQ29weSB0aGUgYGJhY2tlbmQvYCBmb2xkZXIgdG8geW91ciBzZXJ2ZXIuCjIuIGBkb2NrZXIgY29tcG9zZSB1cCAtZCAtLWJ1aWxkYCAoYXMgYWJvdmUpIOKAlCB0aGUgYXBwIG5vdyBsaXN0ZW5zIG9uCiAgIGAxMjcuMC4wLjE6ODgxMWAgb24gdGhhdCBtYWNoaW5lLgozLiBQdXQgYSByZXZlcnNlIHByb3h5IGluIGZyb250IG9mIGl0IGZvciB5b3VyIGRvbWFpbiArIFRMUy4gV2l0aCBuZ2lueDoKCiAgIGBgYG5naW54CiAgIHNlcnZlciB7CiAgICAgICBsaXN0ZW4gNDQzIHNzbDsKICAgICAgIHNlcnZlcl9uYW1lIHJldmlldy55b3VyZG9tYWluLmNvbTsKCiAgICAgICBzc2xfY2VydGlmaWNhdGUgICAgIC9ldGMvbGV0c2VuY3J5cHQvbGl2ZS9yZXZpZXcueW91cmRvbWFpbi5jb20vZnVsbGNoYWluLnBlbTsKICAgICAgIHNzbF9jZXJ0aWZpY2F0ZV9rZXkgL2V0Yy9sZXRzZW5jcnlwdC9saXZlL3Jldmlldy55b3VyZG9tYWluLmNvbS9wcml2a2V5LnBlbTsKCiAgICAgICBjbGllbnRfbWF4X2JvZHlfc2l6ZSA1MG07ICAjIHJvdXRlLWluZm8vYmlsbGluZyBDU1ZzIGNhbiBiZSBzaXplYWJsZQoKICAgICAgIGxvY2F0aW9uIC8gewogICAgICAgICAgIHByb3h5X3Bhc3MgaHR0cDovLzEyNy4wLjAuMTo4ODExOwogICAgICAgICAgIHByb3h5X3NldF9oZWFkZXIgSG9zdCAkaG9zdDsKICAgICAgICAgICBwcm94eV9zZXRfaGVhZGVyIFgtRm9yd2FyZGVkLUZvciAkcHJveHlfYWRkX3hfZm9yd2FyZGVkX2ZvcjsKICAgICAgICAgICBwcm94eV9zZXRfaGVhZGVyIFgtRm9yd2FyZGVkLVByb3RvICRzY2hlbWU7CiAgICAgICB9CiAgIH0KICAgYGBgCgogICBHZXQgYSBjZXJ0aWZpY2F0ZSB3aXRoIGBjZXJ0Ym90IC0tbmdpbnggLWQgcmV2aWV3LnlvdXJkb21haW4uY29tYCAob3IKICAgaG93ZXZlciB5b3UgYWxyZWFkeSBtYW5hZ2UgVExTIGZvciB5b3VyIGRvbWFpbikuCgojIyMgT3B0aW9uIEIg4oCUIHN5c3RlbWQgc2VydmljZSwgbm8gRG9ja2VyCgoxLiBDb3B5IGBiYWNrZW5kL2AgdG8gdGhlIHNlcnZlciwgY3JlYXRlIGEgdmVudiwgYHBpcCBpbnN0YWxsIC1yIHJlcXVpcmVtZW50cy50eHRgLgoyLiBDcmVhdGUgYC9ldGMvc3lzdGVtZC9zeXN0ZW0vY29sbGVjdGlvbi1yZXZpZXcuc2VydmljZWA6CgogICBgYGBpbmkKICAgW1VuaXRdCiAgIERlc2NyaXB0aW9uPUNvbGxlY3Rpb24gTmV0d29yayBSZXZpZXcKICAgQWZ0ZXI9bmV0d29yay50YXJnZXQKCiAgIFtTZXJ2aWNlXQogICBXb3JraW5nRGlyZWN0b3J5PS9vcHQvY29sbGVjdGlvbi1yZXZpZXctYXBwL2JhY2tlbmQKICAgRXhlY1N0YXJ0PS9vcHQvY29sbGVjdGlvbi1yZXZpZXctYXBwL2JhY2tlbmQvLnZlbnYvYmluL3V2aWNvcm4gYXBwLm1haW46YXBwIC0taG9zdCAxMjcuMC4wLjEgLS1wb3J0IDg4MTEKICAgUmVzdGFydD1vbi1mYWlsdXJlCiAgIFVzZXI9d3d3LWRhdGEKCiAgIFtJbnN0YWxsXQogICBXYW50ZWRCeT1tdWx0aS11c2VyLnRhcmdldAogICBgYGAKCjMuIGBzeXN0ZW1jdGwgZW5hYmxlIC0tbm93IGNvbGxlY3Rpb24tcmV2aWV3YCwgdGhlbiBwdXQgdGhlIHNhbWUgbmdpbnggYmxvY2sKICAgZnJvbSBPcHRpb24gQSBpbiBmcm9udCBvZiBpdC4KCkVpdGhlciB3YXksIHRoZSBhcHAgaXRzZWxmIHNob3VsZCBvbmx5IGxpc3RlbiBvbiBgMTI3LjAuMC4xYCDigJQgbGV0IHRoZQpyZXZlcnNlIHByb3h5IGJlIHRoZSBvbmUgdGhpbmcgZXhwb3NlZCB0byB0aGUgaW50ZXJuZXQsIHNvIGl0IGNhbiBhbHNvCmhhbmRsZSBUTFMgYW5kIChzZWUgYmVsb3cpIGFjY2VzcyBjb250cm9sLgoKIyMgQmVmb3JlIHlvdSBleHBvc2UgdGhpcyBwdWJsaWNseTogYWRkIGFjY2VzcyBjb250cm9sCgoqKlRoZSBhcHAgaGFzIG5vIGxvZ2luIG9mIGl0cyBvd24uKiogQW55b25lIHdobyBjYW4gcmVhY2ggdGhlIFVSTCBjYW4gdXBsb2FkCmRhdGEgYW5kIHJlYWQgZXZlcnkgc2F2ZWQgcmVwb3J0IOKAlCBmaW5lIG9uIGBsb2NhbGhvc3RgIGR1cmluZyBVQVQsIG5vdCBmaW5lCm9uY2UgaXQncyBvbiBhIHB1YmxpYyBkb21haW4sIHNpbmNlIHRoaXMgaGFuZGxlcyByb3V0ZS1sZXZlbCBjb21tZXJjaWFsIGRhdGEKKGNvc3RzLCBkcml2ZXIgbmFtZXMsIG1lcmNoYW50IG5hbWVzKS4gQmVmb3JlIHB1dHRpbmcgaXQgb24geW91ciBkb21haW4sCmFkZCBhY2Nlc3MgY29udHJvbCBhdCB0aGUgcmV2ZXJzZS1wcm94eSBsYXllciwgZS5nLiBuZ2lueCBIVFRQIGJhc2ljIGF1dGg6CgpgYGBuZ2lueApsb2NhdGlvbiAvIHsKICAgIGF1dGhfYmFzaWMgIkNvbGxlY3Rpb24gTmV0d29yayBSZXZpZXciOwogICAgYXV0aF9iYXNpY191c2VyX2ZpbGUgL2V0Yy9uZ2lueC8uaHRwYXNzd2Q7CiAgICBwcm94eV9wYXNzIGh0dHA6Ly8xMjcuMC4wLjE6ODgxMTsKICAgIC4uLgp9CmBgYAoKKGBodHBhc3N3ZCAtYyAvZXRjL25naW54Ly5odHBhc3N3ZCB5b3VydXNlcm5hbWVgKSDigJQgb3IgeW91ciByZXZlcnNlIHByb3h5IC8KaG9zdGluZyBwbGF0Zm9ybSdzIGVxdWl2YWxlbnQgKENsb3VkZmxhcmUgQWNjZXNzLCBhbiBJUCBhbGxvd2xpc3QsIGV0Yy4pLCBvcgpwdXQgaXQgYmVoaW5kIHdoYXRldmVyIFZQTi9TU08geW91ciB0ZWFtIGFscmVhZHkgdXNlcy4KCiMjIERhdGEgJiBiYWNrdXBzCgpBbGwgcmVwb3J0IGhpc3RvcnkgbGl2ZXMgaW4gb25lIFNRTGl0ZSBmaWxlOiBgYmFja2VuZC9kYXRhL3JlcG9ydHMuZGJgLgpCYWNrIGl0IHVwIGxpa2UgYW55IG90aGVyIGZpbGUg4oCUIHRoZXJlJ3Mgbm8gZXh0ZXJuYWwgZGF0YWJhc2UgdG8gY29uZmlndXJlLgpVcGxvYWRlZCBDU1ZzIHRoZW1zZWx2ZXMgYXJlIG5vdCByZXRhaW5lZDsgb25seSB0aGUgY29tcHV0ZWQgcmVwb3J0IEpTT04gaXMKc3RvcmVkLgoKIyMgRXh0ZW5kaW5nIGl0CgotIGBwaXBlbGluZS5weWAncyBgY29tcHV0ZV9yZXBvcnQoKWAgaXMgdGhlIHNpbmdsZSBwbGFjZSBhbGwgYnVzaW5lc3MgbG9naWMKICBsaXZlcyDigJQgdGhlIE9QQy12cy1yb3V0ZS1sZXZlbC1hY3R1YWwgbWV0aG9kb2xvZ3ksIEFCLXNjYW4gb3ZlcnJpZGUKICBhcHBsaWNhdGlvbiwgcGVyY2VudGlsZS1iYXNlZCBwcmlvcml0eS1yb3V0ZSBmbGFnZ2luZyAoYm90dG9tIDIwJSBzY2FuCiAgZWZmaWNpZW5jeSwgYm90dG9tIDIwJSBkcml2aW5nIGVmZmljaWVuY3ksIHRvcCAyMCUgbWlsZWFnZS9zdG9wKSwgYW5kCiAgcmVwZWF0LWRyaXZlciBkZXRlY3Rpb24gYXJlIGFsbCB0aGVyZSwgbWF0Y2hpbmcgdGhlIG1hbnVhbCB3ZWVrbHkgcmVwb3J0CiAgZXhhY3RseS4KLSBBZGRpbmcgdGhlIHZlaGljbGUtbWl4IHNlY3Rpb24gKMKnMDQpIGxhdGVyOiBhZGQgaXRzIGNvbXB1dGF0aW9uIHRvCiAgYGNvbXB1dGVfcmVwb3J0KClgJ3MgcmV0dXJuIGRpY3QsIHRoZW4gcG9ydCB0aGUgY29ycmVzcG9uZGluZyBjaGFydC90YWJsZQogIHJlbmRlciBmdW5jdGlvbnMgZnJvbSB0aGUgbWFudWFsIGByZXBvcnQuaHRtbGAgaW50byBgc3RhdGljL2FwcC5qc2AKICAodGhlIHN0YWNrZWQtYmFyIGFuZCBncm91cGVkLWJhciByZW5kZXJlcnMgYXJlIGFscmVhZHkgdGhlcmUgYW5kIHJldXNhYmxlKS4K
+# Collection Network Review 揽收网络复盘工具
+
+Upload the per-depot route-info CSVs, the network billing CSVs, OPC-corrected
+totals, and any AB-scan overrides — the app recomputes the same weekly
+diagnostic that was previously built by hand, and keeps a history of every
+report generated.
+
+Core v1 scope: overall review table, forecast-vs-actual, cancellation
+analysis, and cost analysis (£/parcel + priority routes for review). Vehicle
+mix (§04 in the manual report series) is not in this version.
+
+## What's inside
+
+```
+backend/
+  app/
+    main.py       FastAPI app: /api/upload, /api/reports, /api/reports/{id}
+    pipeline.py    All the business logic (OPC/AB-scan handling, cost calcs,
+                   forecast deviation, cancellation analysis, percentile-based
+                   priority-route flagging, repeat-driver detection)
+    db.py          SQLite persistence (data/reports.db)
+    static/        Frontend — plain HTML/CSS/JS, zero build step, zero
+                   external dependencies (all charts are native CSS/inline SVG)
+  requirements.txt
+  Dockerfile
+  docker-compose.yml
+```
+
+There is no build step and no JS framework — `static/app.js` is loaded
+directly by the browser, and it renders the report from whatever JSON
+`/api/upload` or `/api/reports/{id}` returns.
+
+## Run it locally
+
+```bash
+cd backend
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+uvicorn app.main:app --host 0.0.0.0 --port 8811
+```
+
+Open `http://localhost:8811/`. Report history is stored in
+`backend/data/reports.db` (created automatically on first run).
+
+## Run it with Docker
+
+```bash
+cd backend
+docker compose up -d --build
+```
+
+This builds the image, starts the container on port 8811, and persists
+`data/reports.db` to `./data` on the host so history survives rebuilds.
+
+## Deploying to your own domain
+
+This is a plain FastAPI/uvicorn app, so it deploys the same way as any other
+Python web service. Two common patterns — pick whichever matches how you
+already host things:
+
+### Option A — Docker + reverse proxy (recommended if you're not sure)
+
+1. Copy the `backend/` folder to your server.
+2. `docker compose up -d --build` (as above) — the app now listens on
+   `127.0.0.1:8811` on that machine.
+3. Put a reverse proxy in front of it for your domain + TLS. With nginx:
+
+   ```nginx
+   server {
+       listen 443 ssl;
+       server_name review.yourdomain.com;
+
+       ssl_certificate     /etc/letsencrypt/live/review.yourdomain.com/fullchain.pem;
+       ssl_certificate_key /etc/letsencrypt/live/review.yourdomain.com/privkey.pem;
+
+       client_max_body_size 50m;  # route-info/billing CSVs can be sizeable
+
+       location / {
+           proxy_pass http://127.0.0.1:8811;
+           proxy_set_header Host $host;
+           proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+           proxy_set_header X-Forwarded-Proto $scheme;
+       }
+   }
+   ```
+
+   Get a certificate with `certbot --nginx -d review.yourdomain.com` (or
+   however you already manage TLS for your domain).
+
+### Option B — systemd service, no Docker
+
+1. Copy `backend/` to the server, create a venv, `pip install -r requirements.txt`.
+2. Create `/etc/systemd/system/collection-review.service`:
+
+   ```ini
+   [Unit]
+   Description=Collection Network Review
+   After=network.target
+
+   [Service]
+   WorkingDirectory=/opt/collection-review-app/backend
+   ExecStart=/opt/collection-review-app/backend/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8811
+   Restart=on-failure
+   User=www-data
+
+   [Install]
+   WantedBy=multi-user.target
+   ```
+
+3. `systemctl enable --now collection-review`, then put the same nginx block
+   from Option A in front of it.
+
+Either way, the app itself should only listen on `127.0.0.1` — let the
+reverse proxy be the one thing exposed to the internet, so it can also
+handle TLS and (see below) access control.
+
+## Before you expose this publicly: add access control
+
+**The app has no login of its own.** Anyone who can reach the URL can upload
+data and read every saved report — fine on `localhost` during UAT, not fine
+once it's on a public domain, since this handles route-level commercial data
+(costs, driver names, merchant names). Before putting it on your domain,
+add access control at the reverse-proxy layer, e.g. nginx HTTP basic auth:
+
+```nginx
+location / {
+    auth_basic "Collection Network Review";
+    auth_basic_user_file /etc/nginx/.htpasswd;
+    proxy_pass http://127.0.0.1:8811;
+    ...
+}
+```
+
+(`htpasswd -c /etc/nginx/.htpasswd yourusername`) — or your reverse proxy /
+hosting platform's equivalent (Cloudflare Access, an IP allowlist, etc.), or
+put it behind whatever VPN/SSO your team already uses.
+
+## Data & backups
+
+All report history lives in one SQLite file: `backend/data/reports.db`.
+Back it up like any other file — there's no external database to configure.
+Uploaded CSVs themselves are not retained; only the computed report JSON is
+stored.
+
+## Extending it
+
+- `pipeline.py`'s `compute_report()` is the single place all business logic
+  lives — the OPC-vs-route-level-actual methodology, AB-scan override
+  application, percentile-based priority-route flagging (bottom 20% scan
+  efficiency, bottom 20% driving efficiency, top 20% mileage/stop), and
+  repeat-driver detection are all there, matching the manual weekly report
+  exactly.
+- Adding the vehicle-mix section (§04) later: add its computation to
+  `compute_report()`'s return dict, then port the corresponding chart/table
+  render functions from the manual `report.html` into `static/app.js`
+  (the stacked-bar and grouped-bar renderers are already there and reusable).
