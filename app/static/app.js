@@ -4,14 +4,17 @@
    (ported from the validated manual weekly report).
    ============================================================ */
 
+// Deployment-path-agnostic API base: derived from this script's own resolved
+// URL, so the app works unmodified whether it's served at domain root
+// (http://localhost:8811/) or under a subpath (https://zhangxihao.com/CBTAnalysis/),
+// as long as the reverse proxy strips that subpath before forwarding to the backend.
+const API_BASE = document.currentScript.src.replace(/app\.js(\?.*)?$/, "") + "api/";
+
 const DEPOTS = ["Manchester", "Birmingham", "London"];
 const DEPOT_KEY = { Manchester: "manchester", Birmingham: "birmingham", London: "london" };
 const DEPOT_CLASS = { Manchester: "mcr", Birmingham: "bham", London: "ldn" };
 const COLOR = { Manchester: "#5c4b8a", Birmingham: "#b8862c", London: "#2f5f92" };
 const BI = { Manchester: { en: "Manchester", cn: "曼城" }, Birmingham: { en: "Birmingham", cn: "伯明翰" }, London: { en: "London", cn: "伦敦" } };
-const APP_BASE = window.location.pathname === "/CBTanalysis" || window.location.pathname.startsWith("/CBTanalysis/")
-  ? "/CBTanalysis"
-  : "";
 
 const tagHtml = d => `<span class="tag ${DEPOT_CLASS[d]}">${BI[d].en}<span class="cn">${BI[d].cn}</span></span>`;
 const fmt = (n, dp = 0) => (n === null || n === undefined || Number.isNaN(n)) ? '<span class="na">N/A</span>' : Number(n).toLocaleString('en-GB', { minimumFractionDigits: dp, maximumFractionDigits: dp });
@@ -34,11 +37,31 @@ function switchView(view) {
   if (view === "history") loadHistory();
 }
 
-/* ---------------- drag & drop for file inputs ---------------- */
+/* ---------------- drag & drop for file inputs ----------------
+   The clickable/droppable surface is the whole .filepick-visual card:
+   the real <input type=file> is absolutely positioned to cover it
+   entirely (opacity:0), so there is no dead zone — clicking or
+   dropping anywhere on the card hits the real input directly. */
+const FILEPICK_ICON = '<svg class="filepick-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M7 18a4.6 4.6 0 0 1-.6-9.16 5.5 5.5 0 0 1 10.6-2A4.5 4.5 0 0 1 17 18H7z"/><path d="M12 12v6M9.5 14.5 12 12l2.5 2.5"/></svg>';
+function filepickHtml(id) {
+  return `<div class="filepick">
+    <input type="file" id="${id}" accept=".csv" class="filepick-input">
+    <div class="filepick-visual">
+      ${FILEPICK_ICON}
+      <div class="filepick-text"><strong>点击选择或拖拽文件</strong><span>Click to browse, or drag & drop</span></div>
+      <div class="filepick-chosen"></div>
+    </div>
+  </div>`;
+}
 function enableDropzone(input) {
   const zone = input.closest(".dropzone");
   if (!zone) return;
-  const markFilled = () => zone.classList.toggle("filled", !!(input.files && input.files.length));
+  const chosenEl = zone.querySelector(".filepick-chosen");
+  const markFilled = () => {
+    const has = !!(input.files && input.files.length);
+    zone.classList.toggle("filled", has);
+    if (chosenEl) chosenEl.textContent = has ? `✓ ${input.files[0].name}` : "";
+  };
   ["dragenter", "dragover"].forEach(evt => zone.addEventListener(evt, e => {
     e.preventDefault(); e.stopPropagation(); zone.classList.add("dragover");
   }));
@@ -67,8 +90,8 @@ DEPOTS.forEach(depot => {
   fg.className = "filegroup";
   fg.innerHTML = `
     <span class="depot-tag ${cls}">${BI[depot].en} ${BI[depot].cn}</span>
-    <div class="field dropzone"><label>日期A文件 <span class="cn">Date A file</span></label><input type="file" id="f-route-${key}-a" accept=".csv"><div class="dropzone-hint">拖拽到此处，或点击选择 Drag & drop, or click to browse</div></div>
-    <div class="field dropzone" style="margin-bottom:0;"><label>日期B文件 <span class="cn">Date B file</span></label><input type="file" id="f-route-${key}-b" accept=".csv"><div class="dropzone-hint">拖拽到此处，或点击选择 Drag & drop, or click to browse</div></div>
+    <div class="field dropzone"><label>日期A文件 <span class="cn">Date A file</span></label>${filepickHtml(`f-route-${key}-a`)}</div>
+    <div class="field dropzone" style="margin-bottom:0;"><label>日期B文件 <span class="cn">Date B file</span></label>${filepickHtml(`f-route-${key}-b`)}</div>
   `;
   routeGrid.appendChild(fg);
   enableDropzone(fg.querySelector(`#f-route-${key}-a`));
@@ -183,7 +206,7 @@ document.getElementById("btn-submit").addEventListener("click", async () => {
 
   btn.disabled = true; status.textContent = "计算中… Processing…";
   try {
-    const resp = await fetch(`${APP_BASE}/api/upload`, { method: "POST", body: fd });
+    const resp = await fetch(API_BASE + "upload", { method: "POST", body: fd });
     const body = await resp.json();
     if (!resp.ok) throw new Error(body.detail || "Upload failed");
     showMsg("报告生成成功！Report generated.", "ok");
@@ -202,7 +225,7 @@ document.getElementById("btn-submit").addEventListener("click", async () => {
 async function loadHistory() {
   const list = document.getElementById("history-list");
   list.innerHTML = "加载中… Loading…";
-  const resp = await fetch(`${APP_BASE}/api/reports`);
+  const resp = await fetch(API_BASE + "reports");
   const reports = await resp.json();
   if (!reports.length) { list.innerHTML = '<p class="na">还没有保存的报告 / No saved reports yet.</p>'; return; }
   list.innerHTML = "";
@@ -211,7 +234,7 @@ async function loadHistory() {
     item.className = "history-item";
     item.innerHTML = `<div><div style="font-weight:600;">${r.name}</div><div class="meta">${r.date_a_label} → ${r.date_b_label} · created ${r.created_at}</div></div><button class="secondary small">打开 Open</button>`;
     item.addEventListener("click", async () => {
-      const resp2 = await fetch(`${APP_BASE}/api/reports/${r.id}`);
+      const resp2 = await fetch(`${API_BASE}reports/${r.id}`);
       const full = await resp2.json();
       renderReport(full.data);
       switchView("report");
