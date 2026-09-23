@@ -18,7 +18,6 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 
 @app.middleware("http")
 async def basic_auth(request: Request, call_next):
-    # Keep the health check public so Railway can monitor the service.
     if request.url.path == "/api/health":
         return await call_next(request)
 
