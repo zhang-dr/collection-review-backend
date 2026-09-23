@@ -10,7 +10,7 @@
 
 <header class="top">
   <div>
-    <h1>Collection Network Review <span style="font-weight:400;color:#aab0b6;">揽收网络复盘工具</span></h1>
+    <h1>Collection Network Review <span class="cn-title">揽收网络复盘工具</span></h1>
     <div class="sub">Upload → auto-compute → weekly diagnostic 上传数据自动生成周度诊断报告</div>
   </div>
   <nav class="tabs">
@@ -27,7 +27,7 @@
   <!-- ==================== UPLOAD VIEW ==================== -->
   <section id="view-upload" class="view active">
     <div class="panel">
-      <h3>基本信息 <span class="cn">Report basics</span></h3>
+      <h3><span class="stepnum">1</span><span>基本信息 <span class="cn">Report basics</span></span></h3>
       <div class="grid3">
         <div class="field"><label>日期A（较早）<span class="cn">Date A (earlier)</span></label><input type="date" id="f-date-a"></div>
         <div class="field"><label>日期B（较晚）<span class="cn">Date B (later)</span></label><input type="date" id="f-date-b"></div>
@@ -36,25 +36,45 @@
     </div>
 
     <div class="panel">
-      <h3>各仓 Route Info 文件 <span class="cn">Per-depot route-info CSVs — 3仓 × 2日期 = 6个文件</span></h3>
+      <h3><span class="stepnum">2</span><span>各仓 Route Info 文件 <span class="cn">Per-depot route-info CSVs — 3仓 × 2日期 = 6个文件</span></span></h3>
       <div class="grid3" id="route-file-grid"></div>
     </div>
 
     <div class="panel">
-      <h3>Billing 结算文件 <span class="cn">Network-wide billing CSV — 每个日期1个文件，覆盖三仓。可直接拖拽文件到框内 / drag & drop supported</span></h3>
+      <h3><span class="stepnum">3</span><span>Billing 结算文件 <span class="cn">Network-wide billing CSV — 每个日期1个文件，覆盖三仓</span></span></h3>
       <div class="grid2">
-        <div class="field dropzone"><label>日期A Billing</label><input type="file" id="f-billing-a" accept=".csv"><div class="dropzone-hint">拖拽到此处，或点击选择 Drag & drop, or click to browse</div></div>
-        <div class="field dropzone"><label>日期B Billing</label><input type="file" id="f-billing-b" accept=".csv"><div class="dropzone-hint">拖拽到此处，或点击选择 Drag & drop, or click to browse</div></div>
+        <div class="field dropzone">
+          <label>日期A Billing</label>
+          <div class="filepick">
+            <input type="file" id="f-billing-a" accept=".csv" class="filepick-input">
+            <div class="filepick-visual">
+              <svg class="filepick-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M7 18a4.6 4.6 0 0 1-.6-9.16 5.5 5.5 0 0 1 10.6-2A4.5 4.5 0 0 1 17 18H7z"/><path d="M12 12v6M9.5 14.5 12 12l2.5 2.5"/></svg>
+              <div class="filepick-text"><strong>点击选择或拖拽文件</strong><span>Click to browse, or drag & drop</span></div>
+              <div class="filepick-chosen"></div>
+            </div>
+          </div>
+        </div>
+        <div class="field dropzone">
+          <label>日期B Billing</label>
+          <div class="filepick">
+            <input type="file" id="f-billing-b" accept=".csv" class="filepick-input">
+            <div class="filepick-visual">
+              <svg class="filepick-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M7 18a4.6 4.6 0 0 1-.6-9.16 5.5 5.5 0 0 1 10.6-2A4.5 4.5 0 0 1 17 18H7z"/><path d="M12 12v6M9.5 14.5 12 12l2.5 2.5"/></svg>
+              <div class="filepick-text"><strong>点击选择或拖拽文件</strong><span>Click to browse, or drag & drop</span></div>
+              <div class="filepick-chosen"></div>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
 
     <div class="panel">
-      <h3>OPC 修正后实际揽收量 <span class="cn">OPC-corrected actual pickup — 手动填写，3仓 × 2日期</span></h3>
+      <h3><span class="stepnum">4</span><span>OPC 修正后实际揽收量 <span class="cn">OPC-corrected actual pickup — 手动填写，3仓 × 2日期</span></span></h3>
       <div class="grid3" id="opc-grid"></div>
     </div>
 
     <div class="panel">
-      <h3>AB Scan 差异修正 <span class="cn">AB-scan overrides — 可选，逐条添加</span></h3>
+      <h3><span class="stepnum">5</span><span>AB Scan 差异修正 <span class="cn">AB-scan overrides — 可选，逐条添加</span></span></h3>
       <div id="ab-rows"></div>
       <button class="secondary small" id="btn-add-ab" type="button">+ 添加一条 Add row</button>
     </div>
