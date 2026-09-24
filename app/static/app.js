@@ -411,6 +411,12 @@ function renderMultiLine(container, series, xLabels) {
    REPORT RENDERING — builds the report from a fetched JSON `D`
    ============================================================ */
 function renderReport(D) {
+  // Reports saved before v3 do not contain the new analysis sections.
+  // Default them here so historical reports remain viewable after the upgrade.
+  D.vehicle_mix = Array.isArray(D.vehicle_mix) ? D.vehicle_mix : [];
+  D.duration_buckets = D.duration_buckets || {};
+  D.bscan_candidates = Array.isArray(D.bscan_candidates) ? D.bscan_candidates : [];
+
   document.getElementById("report-empty").style.display = "none";
   const root = document.getElementById("report-content");
   root.style.display = "block";
