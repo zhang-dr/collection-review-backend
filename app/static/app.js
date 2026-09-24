@@ -19,7 +19,14 @@ const BI = { Manchester: { en: "Manchester", cn: "曼城" }, Birmingham: { en: "
 const tagHtml = d => `<span class="tag ${DEPOT_CLASS[d]}">${BI[d].en}<span class="cn">${BI[d].cn}</span></span>`;
 const fmt = (n, dp = 0) => (n === null || n === undefined || Number.isNaN(n)) ? '<span class="na">N/A</span>' : Number(n).toLocaleString('en-GB', { minimumFractionDigits: dp, maximumFractionDigits: dp });
 const pct = (n, dp = 1) => (n === null || n === undefined || Number.isNaN(n)) ? '<span class="na">N/A</span>' : (n >= 0 ? '+' : '') + n.toFixed(dp) + '%';
+// percentage-POINT change — for metrics that are themselves already a share/%
+// (route share, duration share...). Never use pct() for these — pct() computes
+// a *relative* % change of a %, which is the historical bug this project's
+// methodology doc explicitly flags as previously mis-formatted.
+const ppfmt = (n, dp = 1) => (n === null || n === undefined || Number.isNaN(n)) ? '<span class="na">N/A</span>' : (n >= 0 ? '+' : '') + n.toFixed(dp) + 'pp';
 const gbp = (n, dp = 3) => (n === null || n === undefined || Number.isNaN(n)) ? '<span class="na">N/A</span>' : '£' + Number(n).toFixed(dp);
+// qualitative palette for dynamic categories (vehicle classes, cancel reasons)
+const QUAL_COLORS = ['#5c4b8a', '#b8862c', '#2f5f92', '#2f7a4f', '#c1592e', '#a33e6b', '#8a8f78', '#7a5230'];
 
 function showMsg(text, kind = "info") {
   const box = document.getElementById("msgbox");
@@ -419,6 +426,7 @@ function renderReport(D) {
     { en: 'Forecast Deviation WoW', cn: '预测偏差环比', val: gapNet14.toFixed(1) + '% → ' + gapNet21.toFixed(1) + '%' },
     { en: 'Total Routes WoW', cn: '总路线数环比', val: NET.routes14 + ' → ' + NET.routes21 },
     { en: 'Parcels / Route WoW', cn: '单路线产出环比', val: fmt(NET.ppr14) + ' → ' + fmt(NET.ppr21) },
+    { en: 'Job Efficiency WoW', cn: 'Job效率环比 (pcs/hr)', val: fmt(NET.job_eff14, 1) + ' → ' + fmt(NET.job_eff21, 1) },
   ];
   const kpiRow = document.getElementById('kpiRow');
   kpis.forEach(k => { kpiRow.innerHTML += `<div class="kpi"><div class="lbl">${k.en}<span class="cn">${k.cn}</span></div><div class="val tabular">${k.val}</div></div>`; });
@@ -487,8 +495,64 @@ function renderReport(D) {
     DEPOTS.map(d => ({ label: BI[d].en, a: { v: D.cancel_site_a[d] || 0, color: 'var(--line)' }, b: { v: D.cancel_site_b[d] || 0, color: COLOR[d] } })),
     [{ label: D.date_a_label, color: 'var(--line)' }, { label: D.date_b_label, color: 'var(--ink-soft)' }]);
   const merchantTable = document.getElementById('merchantTable');
-  if (D.merchants.length === 0) { merchantTable.innerHTML = `<tr><td colspan="5" class="na" style="text-align:center;">没有单日取消≥2次的商家 / none</td></tr>`; }
-  D.merchants.forEach(m => { merchantTable.innerHTML += `<tr><td style="text-align:left;">${m.day}</td><td style="text-align:left;">${m.seller}</td><td style="text-align:left;">${tagHtml(m.depot)}</td><td class="tabular neg">${m.n}</td><td class="tabular">${fmt(m.pkgs)}</td></tr>`; });
+  if (D.merchants.length === 0) { merchantTable.innerHTML = `<tr><td colspan="6" class="na" style="text-align:center;">没有单日取消≥2次的商家 / none</td></tr>`; }
+  D.merchants.forEach(m => { merchantTable.innerHTML += `<tr><td style="text-align:left;">${m.day}</td><td style="text-align:left;">${m.seller}</td><td style="text-align:left;">${tagHtml(m.depot)}</td><td class="tabular neg">${m.n}</td><td class="tabular">${fmt(m.pkgs)}</td><td style="text-align:left;font-size:11px;">${m.primary_reason || '<span class="na">N/A</span>'}</td></tr>`; });
+
+  /* ---- 04 vehicle mix + duration-bucket structure ---- */
+  const DURATION_BUCKETS = ["0-2H", "2-4H", "4-6H", "6-8H", "8H+"];
+  const vehMeta = {};
+  D.vehicle_mix.forEach((v, i) => { vehMeta[v.veh_class] = { label: v.veh_class, color: QUAL_COLORS[i % QUAL_COLORS.length] }; });
+  renderStackedHBar(document.getElementById('cVehShare'),
+    [{ label: D.date_a_label, segs: D.vehicle_mix.map(v => ({ key: v.veh_class, val: v.route_share_a })) },
+    { label: D.date_b_label, segs: D.vehicle_mix.map(v => ({ key: v.veh_class, val: v.route_share_b })) }],
+    vehMeta, 100, true);
+  renderStackedHBar(document.getElementById('cVehDurShare'),
+    [{ label: D.date_a_label, segs: D.vehicle_mix.map(v => ({ key: v.veh_class, val: v.dur_share_a || 0 })) },
+    { label: D.date_b_label, segs: D.vehicle_mix.map(v => ({ key: v.veh_class, val: v.dur_share_b || 0 })) }],
+    vehMeta, 100, true);
+
+  const vehicleTable = document.getElementById('vehicleTable');
+  if (!D.vehicle_mix.length) { vehicleTable.innerHTML = `<tr><td colspan="6" class="na" style="text-align:center;">无车型数据 / no vehicle data</td></tr>`; }
+  D.vehicle_mix.forEach(v => {
+    const cp = v.cpp_pct;
+    vehicleTable.innerHTML += `<tr>
+      <td style="text-align:left;"><span class="sw" style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${vehMeta[v.veh_class].color};margin-right:6px;"></span>${v.veh_class}</td>
+      <td class="tabular">${v.routes_a} → ${v.routes_b}</td>
+      <td class="tabular">${v.route_share_a.toFixed(1)}% → ${v.route_share_b.toFixed(1)}%</td>
+      <td class="tabular ${v.route_share_pp <= 0 ? 'pos' : 'neg'}">${ppfmt(v.route_share_pp)}</td>
+      <td class="tabular">${gbp(v.cpp_a)} → ${gbp(v.cpp_b)}</td>
+      <td class="tabular ${cp == null ? '' : (cp <= 0 ? 'pos' : 'neg')}">${cp == null ? '<span class="na">N/A</span>' : pct(cp)}</td>
+    </tr>`;
+  });
+
+  const bucketMeta = {};
+  DURATION_BUCKETS.forEach((b, i) => { bucketMeta[b] = { label: b, color: QUAL_COLORS[i % QUAL_COLORS.length] }; });
+  const durGroupKeys = [...DEPOTS, 'Network'];
+  const durRows = [];
+  durGroupKeys.forEach(dep => {
+    const db = D.duration_buckets[dep];
+    if (!db) return;
+    const lbl = dep === 'Network' ? 'Network 全网' : BI[dep].en;
+    durRows.push({ label: `${lbl} · ${D.date_a_label}`, segs: db.rows.map(r => ({ key: r.bucket, val: r.share_a })) });
+    durRows.push({ label: `${lbl} · ${D.date_b_label}`, segs: db.rows.map(r => ({ key: r.bucket, val: r.share_b })) });
+  });
+  renderStackedHBar(document.getElementById('cDurBucket'), durRows, bucketMeta, 100, true);
+
+  const durationTable = document.getElementById('durationTable');
+  durGroupKeys.forEach(dep => {
+    const db = D.duration_buckets[dep];
+    if (!db) return;
+    const labelHtml = dep === 'Network' ? 'Network<span class="cn" style="display:block;">全网</span>' : tagHtml(dep);
+    db.rows.forEach((r, i) => {
+      durationTable.innerHTML += `<tr>
+        ${i === 0 ? `<td rowspan="${db.rows.length}" style="text-align:left;vertical-align:top;">${labelHtml}</td>` : ''}
+        <td style="text-align:left;"><span class="sw" style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${bucketMeta[r.bucket].color};margin-right:6px;"></span>${r.bucket}</td>
+        <td class="tabular">${r.n_a} → ${r.n_b}</td>
+        <td class="tabular">${r.share_a.toFixed(1)}% → ${r.share_b.toFixed(1)}%</td>
+        <td class="tabular">${ppfmt(r.share_pp)}</td>
+      </tr>`;
+    });
+  });
 
   /* ---- 05 cost ---- */
   (function renderCostVol() {
@@ -535,7 +599,7 @@ function renderReport(D) {
       return priState.dir === 'asc' ? cmp : -cmp;
     });
     priorityTable.innerHTML = '';
-    if (rows.length === 0) { priorityTable.innerHTML = `<tr><td colspan="10" class="na" style="text-align:center;">没有命中阈值的路线 / none flagged</td></tr>`; }
+    if (rows.length === 0) { priorityTable.innerHTML = `<tr><td colspan="13" class="na" style="text-align:center;">没有命中阈值的路线 / none flagged</td></tr>`; }
     rows.forEach(r => {
       const flags = (r.fs ? '<span class="flagpill fs">S</span>' : '') + (r.fd ? '<span class="flagpill fd">D</span>' : '') + (r.fm ? '<span class="flagpill fm">M</span>' : '');
       priorityTable.innerHTML += `<tr>
@@ -546,6 +610,9 @@ function renderReport(D) {
         <td class="tabular">${fmt(r.est)}</td><td class="tabular">${fmt(r.act)}</td>
         <td class="tabular">${r.completed} / ${r.cancelled}</td>
         <td class="tabular">${gbp(r.pp)}</td>
+        <td class="tabular ${r.fs ? 'neg' : ''}">${fmt(r.scan_eff, 1)}</td>
+        <td class="tabular ${r.fd ? 'neg' : ''}">${fmt(r.drive_eff, 1)}</td>
+        <td class="tabular ${r.fm ? 'neg' : ''}">${fmt(r.mi_per_stop, 2)}</td>
         <td style="text-align:left;">${flags}</td>
         <td style="text-align:left;">${r.repeat ? '<span class="neg">⟳ ' + r.repeat + '</span>' : '—'}</td>
       </tr>`;
@@ -574,6 +641,24 @@ function renderReport(D) {
       `路线 ${a.route_id}：${a.before ?? 'N/A'} → <b>${a.after}</b>（${a.reason || '无说明'}）`).join('<br>');
   } else {
     document.getElementById('abScanNote').innerHTML = '<span class="na">本次未应用AB scan修正</span>';
+  }
+
+  /* ---- B-scan verification candidates (system-suggested only) ---- */
+  const bscanTable = document.getElementById('bscanTable');
+  if (!D.bscan_candidates.length) {
+    bscanTable.innerHTML = `<tr><td colspan="7" class="na" style="text-align:center;">无符合条件的候选路线 / no candidates matched the B-scan filter</td></tr>`;
+  } else {
+    D.bscan_candidates.forEach(r => {
+      bscanTable.innerHTML += `<tr>
+        <td style="text-align:left;" class="tabular">${r.route_id}</td>
+        <td style="text-align:left;">${tagHtml(r.depot)}</td>
+        <td style="text-align:left;">${r.driver}</td>
+        <td class="tabular">${fmt(r.est)}</td>
+        <td class="tabular">${fmt(r.act)}</td>
+        <td class="tabular neg">-${r.fgap_pct.toFixed(1)}%</td>
+        <td class="tabular">${gbp(r.pp)}</td>
+      </tr>`;
+    });
   }
   if (D.warnings && D.warnings.length) {
     document.getElementById('warnNote').innerHTML = '⚠ ' + D.warnings.join('<br>⚠ ');
@@ -627,7 +712,39 @@ function buildReportSkeleton(D) {
     </div>
     <div class="tblwrap" style="margin-top:14px;">
       <h4 style="font-size:12.5px;margin:0 0 8px;">Repeat merchants (2+ cancellations)<span class="cn" style="display:block;color:var(--muted);font-weight:400;">高频取消商家</span></h4>
-      <table><thead><tr><th style="text-align:left;">Day</th><th style="text-align:left;">Seller</th><th style="text-align:left;">Depot</th><th>Cancellations</th><th>Est. parcels</th></tr></thead><tbody id="merchantTable"></tbody></table>
+      <table><thead><tr><th style="text-align:left;">Day</th><th style="text-align:left;">Seller</th><th style="text-align:left;">Depot</th><th>Cancellations</th><th>Est. parcels</th><th style="text-align:left;">Primary reason<span class="cn">主要取消原因</span></th></tr></thead><tbody id="merchantTable"></tbody></table>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h3>04 · Route Structure — Vehicle &amp; Duration<span class="cn">路线分析：车型与时长结构</span></h3>
+    <p style="margin:0 0 10px;font-size:12px;color:var(--muted);">4.1 Vehicle mix change — route-count share and duration share, both dates. <span class="cn" style="display:block;">车型占比变化 — 路线数占比 与 时长占比，两个日期对比。</span></p>
+    <div class="grid2">
+      <div><h4 style="font-size:12.5px;margin:0 0 8px;">Route-count share by vehicle class<span class="cn" style="display:block;color:var(--muted);font-weight:400;">按车型的路线数占比</span></h4><div class="chartbox tall"><div id="cVehShare" style="height:100%;"></div></div></div>
+      <div><h4 style="font-size:12.5px;margin:0 0 8px;">Duration share by vehicle class<span class="cn" style="display:block;color:var(--muted);font-weight:400;">按车型的时长占比</span></h4><div class="chartbox tall"><div id="cVehDurShare" style="height:100%;"></div></div></div>
+    </div>
+    <div class="tblwrap" style="margin-top:14px;">
+      <h4 style="font-size:12.5px;margin:0 0 8px;">4.2 Vehicle detail<span class="cn" style="display:block;color:var(--muted);font-weight:400;">车型明细</span></h4>
+      <table><thead><tr>
+        <th style="text-align:left;">Vehicle class<span class="cn">车型</span></th>
+        <th>Routes A→B<span class="cn">路线数</span></th>
+        <th>Route share A→B<span class="cn">路线占比</span></th>
+        <th>Δ share<span class="cn">占比变化</span></th>
+        <th>£/parcel A→B<span class="cn">单票成本</span></th>
+        <th>Δ £/parcel<span class="cn">单票环比</span></th>
+      </tr></thead><tbody id="vehicleTable"></tbody></table>
+    </div>
+
+    <h4 style="font-size:12.5px;margin:20px 0 8px;">4.3 Duration-bucket structure by depot<span class="cn" style="display:block;color:var(--muted);font-weight:400;">各仓路线时长区间分布</span></h4>
+    <div class="chartbox xtall"><div id="cDurBucket" style="height:100%;"></div></div>
+    <div class="tblwrap" style="margin-top:14px;">
+      <table><thead><tr>
+        <th style="text-align:left;">Depot<span class="cn">仓</span></th>
+        <th style="text-align:left;">Bucket<span class="cn">时长区间</span></th>
+        <th>Routes A→B<span class="cn">路线数</span></th>
+        <th>Share A→B<span class="cn">占比</span></th>
+        <th>Δ share<span class="cn">占比变化</span></th>
+      </tr></thead><tbody id="durationTable"></tbody></table>
     </div>
   </div>
 
@@ -653,9 +770,26 @@ function buildReportSkeleton(D) {
         <th data-key="act" data-type="number">Actual<span class="sortarrow"></span></th>
         <th data-key="completed" data-type="number">Compl./Cancel.<span class="sortarrow"></span></th>
         <th data-key="pp" data-type="number">£/parcel<span class="sortarrow"></span></th>
+        <th data-key="scan_eff" data-type="number">Scan eff. (pcs/hr)<span class="sortarrow"></span></th>
+        <th data-key="drive_eff" data-type="number">Drive eff. (mph)<span class="sortarrow"></span></th>
+        <th data-key="mi_per_stop" data-type="number">Mi/stop<span class="sortarrow"></span></th>
         <th style="text-align:left;" data-key="hitcount" data-type="number">Hit dim.<span class="sortarrow"></span></th>
         <th style="text-align:left;" data-key="repeat" data-type="string">Repeat<span class="sortarrow"></span></th>
       </tr></thead><tbody id="priorityTable"></tbody></table>
+    </div>
+
+    <h4 style="font-size:12.5px;margin:20px 0 8px;">B-scan verification candidates (date B) — system-suggested, not auto-applied<span class="cn" style="display:block;color:var(--muted);font-weight:400;">B scan差异修正候选路线（较晚日期）— 系统提示，不自动生效</span></h4>
+    <p style="font-size:11px;color:var(--muted);margin:0 0 10px;">Filter: £/parcel ≥ £1.00 AND (forecast−actual)/forecast ≥ 40% AND Bulkout = Yes. <span class="cn" style="display:block;">筛选条件：单票成本≥£1.00 且 (预测-实际)/预测≥40% 且 Bulkout=Yes。</span></p>
+    <div class="tblwrap">
+      <table><thead><tr>
+        <th style="text-align:left;">Route ID<span class="cn">路线ID</span></th>
+        <th style="text-align:left;">Depot<span class="cn">仓</span></th>
+        <th style="text-align:left;">Driver<span class="cn">司机</span></th>
+        <th>Forecast<span class="cn">预测量</span></th>
+        <th>Actual<span class="cn">实际揽收</span></th>
+        <th>Gap<span class="cn">偏差</span></th>
+        <th>£/parcel<span class="cn">单票成本</span></th>
+      </tr></thead><tbody id="bscanTable"></tbody></table>
     </div>
 
     <h4 style="font-size:12.5px;margin:20px 0 8px;">AB-scan corrections applied<span class="cn" style="display:block;color:var(--muted);font-weight:400;">已应用的AB scan修正</span></h4>
