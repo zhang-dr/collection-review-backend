@@ -56,6 +56,7 @@ ROUTE_INFO_ALIASES = {
     "route_id": ["Route ID", "RouteID", "route id"],
     "driver": ["Driver Name", "Driver"],
     "vehicle": ["Vehicle Type", "Vehicle"],
+    "bulkout": ["Bulkout", "Bulk Out", "BulkOut"],
     "est_dur": ["Estimated Total Duration (minute)", "Estimated Total Duration"],
     "est_dist": ["Estimated Total Distance (miles)", "Estimated Total Distance"],
     "est_pickup": ["Estimated Total Pickup"],
@@ -143,9 +144,15 @@ def parse_route_info(file_bytes: bytes, depot: str, file_label: str,
 
     route_cols = ["route_id", "driver", "vehicle", "est_dur", "est_dist",
                   "est_pickup", "act_dur", "act_dist", "act_pickup"]
+    if "bulkout" in df.columns:
+        route_cols = route_cols + ["bulkout"]
     route_level = df.groupby("route_id", as_index=False).first()[route_cols]
     route_level["driver"] = route_level["driver"].astype(str).str.strip().str.replace(r"\s+", " ", regex=True)
     route_level["vehicle"] = route_level["vehicle"].astype(str).str.strip()
+    if "bulkout" not in route_level.columns:
+        route_level["bulkout"] = None
+    else:
+        route_level["bulkout"] = route_level["bulkout"].astype(str).str.strip()
 
     if "job_id" in df.columns and "job_type" in df.columns and "job_status" in df.columns:
         jobs = df[df["job_id"].notna() & (df["job_type"].astype(str).str.lower() == "forward")]
@@ -268,6 +275,68 @@ def shift_bucket(vehicle: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Vehicle class + duration-bucket classification (methodology §04)
+# ---------------------------------------------------------------------------
+
+def veh_class(vehicle) -> str:
+    """Collapse raw vehicle-type strings into the small set of classes used
+    for the vehicle-mix module. Luton and Xtra Long/Extra Long variants are
+    normalized; everything else keeps its original (trimmed) label."""
+    v = str(vehicle).strip()
+    if not v or v.lower() == "nan":
+        return "Unknown"
+    vl = v.lower()
+    if "luton" in vl:
+        return "Luton"
+    if "xtra long" in vl or "xtra-long" in vl or "extra long" in vl or "extra-long" in vl or "xlwb" in vl:
+        return "XLWB Van"
+    return v
+
+
+DURATION_BUCKETS = ["0-2H", "2-4H", "4-6H", "6-8H", "8H+"]
+
+
+def duration_bucket(minutes) -> Optional[str]:
+    """Bucket a route's duration (minutes) into one of DURATION_BUCKETS."""
+    if minutes is None or (isinstance(minutes, float) and np.isnan(minutes)):
+        return None
+    try:
+        h = float(minutes) / 60.0
+    except (TypeError, ValueError):
+        return None
+    if h <= 2:
+        return "0-2H"
+    if h <= 4:
+        return "2-4H"
+    if h <= 6:
+        return "4-6H"
+    if h <= 8:
+        return "6-8H"
+    return "8H+"
+
+
+# ---------------------------------------------------------------------------
+# B-scan verification candidates (methodology: system-suggested, never
+# auto-applied — confirmed corrections still come through AB-scan overrides)
+# ---------------------------------------------------------------------------
+
+def find_bscan_candidates(rdf: pd.DataFrame) -> pd.DataFrame:
+    """Routes whose actual pickup looks likely to be a scan-side undercount:
+    £/parcel >= 1.00, (forecast-actual)/forecast >= 40%, and Bulkout == 'Yes'."""
+    df = rdf.copy()
+    if "bulkout" not in df.columns:
+        df["bulkout"] = None
+    df = df[df["cost"].notna() & df["act_pickup"].notna() & (df["act_pickup"] > 0) &
+            df["est_pickup"].notna() & (df["est_pickup"] > 0)].copy()
+    if df.empty:
+        return df.assign(fgap=[], bulkout_yes=[])
+    df["fgap"] = (df["est_pickup"] - df["act_pickup"]) / df["est_pickup"]
+    df["bulkout_yes"] = df["bulkout"].astype(str).str.strip().str.lower() == "yes"
+    cond = (df["pp"] >= 1.00) & (df["fgap"] >= 0.40) & df["bulkout_yes"]
+    return df[cond].copy()
+
+
+# ---------------------------------------------------------------------------
 # Master compute
 # ---------------------------------------------------------------------------
 
@@ -329,6 +398,8 @@ def compute_report(inp: ComputeInputs) -> dict:
             rdf["mi_per_stop"] = rdf["act_dist"] / denom
             rdf["pp"] = rdf["cost"] / rdf["act_pickup"]
             rdf["shift"] = rdf["vehicle"].apply(shift_bucket)
+            rdf["veh_class"] = rdf["vehicle"].apply(veh_class)
+            rdf["dur_bucket"] = rdf["act_dur"].apply(duration_bucket)
             full[(depot, dk)] = rdf
 
     ab_applied_all = []
@@ -402,9 +473,16 @@ def compute_report(inp: ComputeInputs) -> dict:
             continue
         g = allc.groupby(["seller", "depot"]).agg(n=("route_id", "size"), pkgs=("job_pickup_est", "sum")).reset_index()
         g = g[g["n"] >= 2].sort_values("n", ascending=False)
+        reason_col = allc["fail_reason"].fillna("Unknown") if "fail_reason" in allc.columns else None
         for _, r in g.iterrows():
+            primary_reason = None
+            if reason_col is not None:
+                mask = (allc["seller"] == r["seller"]) & (allc["depot"] == r["depot"])
+                counts = reason_col[mask].value_counts()
+                if len(counts):
+                    primary_reason = str(counts.index[0])
             merchants.append({"day": label, "seller": r["seller"], "depot": r["depot"],
-                               "n": int(r["n"]), "pkgs": int(r["pkgs"])})
+                               "n": int(r["n"]), "pkgs": int(r["pkgs"]), "primary_reason": primary_reason})
 
     # ---- price per parcel + priority routes (LATER date = "b") ----
     pool_b = pd.concat([full[(depot, "b")] for depot in DEPOTS], ignore_index=True)
@@ -415,14 +493,33 @@ def compute_report(inp: ComputeInputs) -> dict:
         pp_latest.append({"route_id": r["route_id"], "depot": r["depot"], "driver": r["driver"],
                            "act": int(r["act_pickup"]), "cost": round(float(r["cost"]), 2), "pp": round(float(r["pp"]), 4)})
 
-    scan_thr = float(np.nanpercentile(pool_b_valid["scan_eff"].dropna(), 20)) if len(pool_b_valid) else None
-    drive_thr = float(np.nanpercentile(pool_b_valid["drive_eff"].dropna(), 20)) if len(pool_b_valid) else None
-    mi_thr = float(np.nanpercentile(pool_b_valid["mi_per_stop"].dropna(), 80)) if len(pool_b_valid) else None
+    # methodology-exact bottom/top-20% flagging: nsmallest/nlargest with
+    # k = round(n * 0.2), not a percentile-threshold soft cut.
+    def flag_bottom_top_20(pool: pd.DataFrame) -> pd.DataFrame:
+        p = pool.copy()
+        n = len(p)
+        k = round(n * 0.2)
+        p["fs"] = False
+        p["fd"] = False
+        p["fm"] = False
+        if k > 0 and n > 0:
+            scan_valid = p[p["scan_eff"].notna()]
+            drive_valid = p[p["drive_eff"].notna()]
+            mi_valid = p[p["mi_per_stop"].notna()]
+            fs_ids = set(scan_valid.nsmallest(min(k, len(scan_valid)), "scan_eff")["route_id"])
+            fd_ids = set(drive_valid.nsmallest(min(k, len(drive_valid)), "drive_eff")["route_id"])
+            fm_ids = set(mi_valid.nlargest(min(k, len(mi_valid)), "mi_per_stop")["route_id"])
+            p["fs"] = p["route_id"].isin(fs_ids)
+            p["fd"] = p["route_id"].isin(fd_ids)
+            p["fm"] = p["route_id"].isin(fm_ids)
+        p["any_flag"] = p[["fs", "fd", "fm"]].any(axis=1)
+        return p
 
-    pool_b_valid["fs"] = pool_b_valid["scan_eff"] <= scan_thr if scan_thr is not None else False
-    pool_b_valid["fd"] = pool_b_valid["drive_eff"] <= drive_thr if drive_thr is not None else False
-    pool_b_valid["fm"] = pool_b_valid["mi_per_stop"] >= mi_thr if mi_thr is not None else False
-    pool_b_valid["any_flag"] = pool_b_valid[["fs", "fd", "fm"]].any(axis=1)
+    pool_b_valid = flag_bottom_top_20(pool_b_valid)
+    k_b = round(len(pool_b_valid) * 0.2)
+    scan_thr = float(pool_b_valid.loc[pool_b_valid["fs"], "scan_eff"].max()) if pool_b_valid["fs"].any() else None
+    drive_thr = float(pool_b_valid.loc[pool_b_valid["fd"], "drive_eff"].max()) if pool_b_valid["fd"].any() else None
+    mi_thr = float(pool_b_valid.loc[pool_b_valid["fm"], "mi_per_stop"].min()) if pool_b_valid["fm"].any() else None
     flagged_b = pool_b_valid[pool_b_valid["any_flag"]].copy()
 
     flagged_latest = []
@@ -431,8 +528,13 @@ def compute_report(inp: ComputeInputs) -> dict:
             "route_id": r["route_id"], "depot": r["depot"], "driver": r["driver"], "vehicle": r["vehicle"],
             "est": int(r["est_pickup"]) if pd.notna(r["est_pickup"]) else None,
             "act": int(r["act_pickup"]), "completed": int(r["completed"]), "cancelled": int(r["cancelled"]),
+            "cost": round(float(r["cost"]), 2) if pd.notna(r["cost"]) else None,
             "pp": round(float(r["pp"]), 4) if pd.notna(r["pp"]) else None,
+            "scan_eff": round(float(r["scan_eff"]), 2) if pd.notna(r["scan_eff"]) else None,
+            "drive_eff": round(float(r["drive_eff"]), 2) if pd.notna(r["drive_eff"]) else None,
+            "mi_per_stop": round(float(r["mi_per_stop"]), 3) if pd.notna(r["mi_per_stop"]) else None,
             "fs": bool(r["fs"]), "fd": bool(r["fd"]), "fm": bool(r["fm"]),
+            "hit_count": int(r["fs"]) + int(r["fd"]) + int(r["fm"]),
         })
 
     # repeat-driver check against date "a"
@@ -440,12 +542,7 @@ def compute_report(inp: ComputeInputs) -> dict:
     pool_a_valid = pool_a[pool_a["scan_eff"].notna() & pool_a["drive_eff"].notna() & pool_a["mi_per_stop"].notna()].copy()
     repeats = {}
     if len(pool_a_valid) >= 5:
-        scan_thr_a = float(np.nanpercentile(pool_a_valid["scan_eff"].dropna(), 20))
-        drive_thr_a = float(np.nanpercentile(pool_a_valid["drive_eff"].dropna(), 20))
-        mi_thr_a = float(np.nanpercentile(pool_a_valid["mi_per_stop"].dropna(), 80))
-        pool_a_valid["fs"] = pool_a_valid["scan_eff"] <= scan_thr_a
-        pool_a_valid["fd"] = pool_a_valid["drive_eff"] <= drive_thr_a
-        pool_a_valid["fm"] = pool_a_valid["mi_per_stop"] >= mi_thr_a
+        pool_a_valid = flag_bottom_top_20(pool_a_valid)
 
         def dims(row):
             s = []
@@ -472,6 +569,98 @@ def compute_report(inp: ComputeInputs) -> dict:
         anomaly_depot[depot] = {"total": int(len(sub)), "fs": int(sub["fs"].sum()), "fd": int(sub["fd"].sum()),
                                  "fm": int(sub["fm"].sum()), "any": int(sub["any_flag"].sum())}
 
+    # ---- network job-efficiency (parcels/hr, weighted) WoW ----
+    def network_job_eff(pool: pd.DataFrame) -> Optional[float]:
+        tot_pickup = pool["act_pickup"].sum(skipna=True)
+        tot_dur_hr = pool["act_dur"].sum(skipna=True) / 60.0
+        return float(tot_pickup / tot_dur_hr) if tot_dur_hr else None
+
+    job_eff_a = network_job_eff(pool_a)
+    job_eff_b = network_job_eff(pool_b)
+    net["job_eff14"] = round(job_eff_a, 2) if job_eff_a is not None else None
+    net["job_eff21"] = round(job_eff_b, 2) if job_eff_b is not None else None
+    net["job_eff_pct"] = (round((job_eff_b - job_eff_a) / job_eff_a * 100, 2)
+                           if job_eff_a and job_eff_b is not None else None)
+
+    # ---- §04 vehicle-mix (5a/5c): route-share % + duration-share %, both periods ----
+    def vehicle_mix_agg(pool: pd.DataFrame) -> pd.DataFrame:
+        p = pool[pool["veh_class"].notna()].copy()
+        total_routes = len(p)
+        total_dur = p["act_dur"].sum(skipna=True)
+        g = p.groupby("veh_class").agg(
+            routes=("route_id", "count"), dur=("act_dur", "sum"),
+            cost=("cost", "sum"), act=("act_pickup", "sum"),
+        )
+        g["route_share"] = g["routes"] / total_routes * 100 if total_routes else np.nan
+        g["dur_share"] = g["dur"] / total_dur * 100 if total_dur else np.nan
+        g["cpp"] = g["cost"] / g["act"]
+        return g
+
+    veh_a = vehicle_mix_agg(pool_a)
+    veh_b = vehicle_mix_agg(pool_b)
+    all_classes = sorted(set(veh_a.index) | set(veh_b.index))
+    vehicle_mix = []
+    for cls in all_classes:
+        ra = veh_a.loc[cls] if cls in veh_a.index else None
+        rb = veh_b.loc[cls] if cls in veh_b.index else None
+        routes_a = int(ra["routes"]) if ra is not None else 0
+        routes_b = int(rb["routes"]) if rb is not None else 0
+        rsa = float(ra["route_share"]) if ra is not None and pd.notna(ra["route_share"]) else 0.0
+        rsb = float(rb["route_share"]) if rb is not None and pd.notna(rb["route_share"]) else 0.0
+        dsa = float(ra["dur_share"]) if ra is not None and pd.notna(ra["dur_share"]) else None
+        dsb = float(rb["dur_share"]) if rb is not None and pd.notna(rb["dur_share"]) else None
+        cppa = float(ra["cpp"]) if ra is not None and pd.notna(ra["cpp"]) else None
+        cppb = float(rb["cpp"]) if rb is not None and pd.notna(rb["cpp"]) else None
+        vehicle_mix.append({
+            "veh_class": cls, "routes_a": routes_a, "routes_b": routes_b,
+            "route_share_a": round(rsa, 2), "route_share_b": round(rsb, 2),
+            "route_share_pp": round(rsb - rsa, 2),
+            "dur_share_a": round(dsa, 2) if dsa is not None else None,
+            "dur_share_b": round(dsb, 2) if dsb is not None else None,
+            "dur_share_pp": round(dsb - dsa, 2) if (dsa is not None and dsb is not None) else None,
+            "cpp_a": round(cppa, 4) if cppa is not None else None,
+            "cpp_b": round(cppb, 4) if cppb is not None else None,
+            "cpp_pct": round((cppb - cppa) / cppa * 100, 2) if (cppa and cppb is not None) else None,
+        })
+    vehicle_mix.sort(key=lambda x: -x["routes_b"])
+
+    # ---- §04 duration-bucket structure (5d), per depot + network, both periods ----
+    def bucket_counts(pool: pd.DataFrame) -> pd.Series:
+        p = pool[pool["dur_bucket"].notna()]
+        return p.groupby("dur_bucket").size().reindex(DURATION_BUCKETS, fill_value=0)
+
+    duration_buckets = {}
+    for dep_key in DEPOTS + ["Network"]:
+        if dep_key == "Network":
+            pa_d, pb_d = pool_a, pool_b
+        else:
+            pa_d, pb_d = pool_a[pool_a["depot"] == dep_key], pool_b[pool_b["depot"] == dep_key]
+        ca, cb = bucket_counts(pa_d), bucket_counts(pb_d)
+        total_a, total_b = int(ca.sum()), int(cb.sum())
+        rows = []
+        for buck in DURATION_BUCKETS:
+            na, nb = int(ca[buck]), int(cb[buck])
+            sa = round(na / total_a * 100, 2) if total_a else 0.0
+            sb = round(nb / total_b * 100, 2) if total_b else 0.0
+            rows.append({"bucket": buck, "n_a": na, "n_b": nb, "share_a": sa, "share_b": sb,
+                         "share_pp": round(sb - sa, 2)})
+        duration_buckets[dep_key] = {"total_a": total_a, "total_b": total_b, "rows": rows}
+
+    # ---- B-scan verification candidates (system-suggested only), latest date ----
+    bscan_candidates = []
+    for depot in DEPOTS:
+        cand = find_bscan_candidates(full[(depot, "b")])
+        for _, r in cand.iterrows():
+            bscan_candidates.append({
+                "route_id": r["route_id"], "depot": depot, "driver": r["driver"], "vehicle": r["vehicle"],
+                "est": int(r["est_pickup"]) if pd.notna(r["est_pickup"]) else None,
+                "act": int(r["act_pickup"]) if pd.notna(r["act_pickup"]) else None,
+                "fgap_pct": round(float(r["fgap"]) * 100, 1) if pd.notna(r["fgap"]) else None,
+                "pp": round(float(r["pp"]), 4) if pd.notna(r["pp"]) else None,
+                "cost": round(float(r["cost"]), 2) if pd.notna(r["cost"]) else None,
+            })
+    bscan_candidates.sort(key=lambda x: -(x["fgap_pct"] or 0))
+
     return {
         "date_a_label": inp.date_a_label, "date_b_label": inp.date_b_label,
         "depots": DEPOTS,
@@ -481,9 +670,13 @@ def compute_report(inp: ComputeInputs) -> dict:
         "merchants": merchants,
         "pp_latest": pp_latest,
         "flagged_latest": flagged_latest,
+        "k_latest": k_b,
         "repeats": repeats,
         "thresholds": {"scan": scan_thr, "drive": drive_thr, "mi": mi_thr},
         "anomaly_depot": anomaly_depot,
         "ab_scan_applied": ab_applied_all,
+        "vehicle_mix": vehicle_mix,
+        "duration_buckets": duration_buckets,
+        "bscan_candidates": bscan_candidates,
         "warnings": [f"{w.file_label}: {w.message}" for w in warnings],
     }
