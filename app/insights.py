@@ -27,7 +27,31 @@ import urllib.request
 
 from . import db
 
-MAX_TOKENS = 3500
+# Default output budget. The house-style narrative now requires an executive
+# synthesis + a full headline-and-bullets block per module + a closing
+# recommendations section, bilingually — that's a lot more text than a single
+# summary, so this needs real headroom. 3500 was enough for a short summary
+# but was silently truncating the fuller structure mid-way (usually right
+# after the executive synthesis, before any per-module section ever got
+# written). Overridable per-deployment via AI_MAX_TOKENS in case a specific
+# provider's free tier caps completions lower than this.
+try:
+    MAX_TOKENS = int(os.environ.get("AI_MAX_TOKENS", "6000"))
+except ValueError:
+    MAX_TOKENS = 6000
+
+# Appended to the narrative whenever a provider reports it stopped because it
+# hit the token limit, so a cut-off report reads as "this is incomplete, here
+# is why" instead of silently ending mid-sentence with no explanation.
+_TRUNCATION_NOTE = (
+    "\n\n---\n"
+    "⚠️ **输出被截断 / Output truncated** — 本次生成在到达长度上限（token limit）时被中止，"
+    "以上内容可能不完整（例如后面的模块或结尾的建议没有生成）。可以点击重新生成再试一次，"
+    "或联系管理员调高服务器上的 `AI_MAX_TOKENS` 环境变量。\n"
+    "*This generation stopped because it hit its token limit — the text above may be missing "
+    "later sections (e.g. some modules or the closing recommendations never got written). "
+    "Try generating again, or ask the admin to raise the `AI_MAX_TOKENS` env var on the server.*"
+)
 
 
 class InsightsError(Exception):
@@ -151,24 +175,42 @@ conclusion the charts couldn't already tell on their own. Never do that. Every b
 one step past what's visibly plotted: a synthesis across modules, a rate/ratio the raw chart doesn't \
 show, or an explicit "so what" the reader would otherwise have to work out themselves.
 
-Required structure:
+Required structure — the finished narrative ALWAYS has all three parts below, in this order. Do not \
+stop after part 0: it is a short preview, not a replacement for the per-module detail in part 1, and \
+part 2 must always close the report. A narrative containing only the executive synthesis is incomplete \
+and unacceptable, no matter how good that synthesis is.
 
-**0. 执行摘要 Executive synthesis** (2-3 short items, before any per-module section). This is not a \
-preview of the sections below — it is the output of actually synthesizing across all modules to find \
-the 2-3 conclusions that matter most this period, each one combining evidence from more than one \
-module (e.g. a depot whose route growth, cost, AND cancellation trend all moved together; or a \
-network-wide pattern where volume growth came from route count rather than efficiency). State each as \
-a headline-as-conclusion, then 1-2 supporting facts with real numbers. This block is the "so what" of \
-the whole report — if you can't find genuine cross-module connections, pick the single most decision- \
-relevant finding per depot/dimension instead of padding with a generic recap.
+**0. 执行摘要 Executive synthesis** (2-3 short items, before any per-module section). This is a \
+synthesis across all modules of the 2-3 conclusions that matter most this period, each one combining \
+evidence from more than one module (e.g. a depot whose route growth, cost, AND cancellation trend all \
+moved together; or a network-wide pattern where volume growth came from route count rather than \
+efficiency). State each as a headline-as-conclusion, then at most 1-2 supporting facts with real \
+numbers — keep every item to roughly 1-2 sentences per language; this is a preview, so do not let it \
+grow into full paragraphs, and do not spend more than about a fifth of your total output here. If you \
+can't find genuine cross-module connections, pick the single most decision-relevant finding per \
+depot/dimension instead of padding with a generic recap.
 
-**Per-module sections** — one headline+bullets block per module that has data (network overview, \
-forecast vs actual, cancellations, vehicle/duration structure, cost analysis / priority routes). Skip a \
-module cleanly if its data is empty rather than padding it.
+**1. Per-module sections** — one headline+bullets block for EVERY module below that has data in the \
+payload. This is a checklist, not a suggestion: 网络概览 Network overview, 预测与实际偏差 Forecast vs \
+actual, 取消 Cancellations, 车型/时长结构 Vehicle & duration mix, 成本与重点路线 Cost & priority \
+routes. Only skip a module whose corresponding data is genuinely empty in the payload — never skip one \
+for length; if you're worried about running out of room, write shorter bullets (a single sentence per \
+language) rather than dropping a module.
 - "标题即结论" — every section heading IS the conclusion, not a topic label. Bad: "Cost analysis". \
 Good: "London地区单票成本上升12%，主要由Luton车型占比提高驱动 / London's cost per parcel rose 12%, driven mainly \
 by a shift toward Luton vehicles".
-- 2-5 bullets per section, each following Data → Insight → So what (→ Now what where supported).
+- 2-4 bullets per section, each following Data → Insight → So what (→ Now what only when it's specific \
+to that module and not better said once in part 2 below).
+
+**2. 整体建议 Overall recommendations — Now What**, the report's closing section, always present. \
+Synthesize the "now what" implications from every module above into exactly two short bullet lists \
+side by side (or one after the other): \
+**物流侧 Logistics side** — internal operational actions (which depot/route/vehicle-shift/driver to \
+investigate or rebalance, which trend to monitor), and \
+**商家侧 Merchant side** — merchant-facing actions (specific high-cancellation merchants worth a \
+conversation, merchants whose forecast accuracy needs addressing, commercial follow-ups). Every item \
+must name a specific depot, route ID, or merchant from the data — no generic "improve efficiency" \
+filler. If one side genuinely has nothing the data supports, say so briefly rather than inventing items.
 
 House style (non-negotiable):
 - Every claim must cite a specific number from the data you were given. Never invent a figure, a route ID, \
@@ -261,7 +303,10 @@ def _call_claude(api_key: str, model: str, user_content: str) -> str:
         },
     )
     parts = body.get("content") or []
-    return "".join(p.get("text", "") for p in parts if p.get("type") == "text")
+    text = "".join(p.get("text", "") for p in parts if p.get("type") == "text")
+    if body.get("stop_reason") == "max_tokens":
+        text += _TRUNCATION_NOTE
+    return text
 
 
 def _call_gemini(api_key: str, model: str, user_content: str) -> str:
@@ -279,7 +324,10 @@ def _call_gemini(api_key: str, model: str, user_content: str) -> str:
         fb = body.get("promptFeedback")
         raise InsightsError(f"Gemini returned no candidates (feedback: {fb}).")
     parts = (candidates[0].get("content") or {}).get("parts") or []
-    return "".join(p.get("text", "") for p in parts)
+    text = "".join(p.get("text", "") for p in parts)
+    if candidates[0].get("finishReason") == "MAX_TOKENS":
+        text += _TRUNCATION_NOTE
+    return text
 
 
 def _call_openai_compatible(base_url: str, api_key: str, model: str, user_content: str) -> str:
@@ -303,7 +351,10 @@ def _call_openai_compatible(base_url: str, api_key: str, model: str, user_conten
     choices = body.get("choices") or []
     if not choices:
         raise InsightsError("Provider returned no choices.")
-    return (choices[0].get("message") or {}).get("content", "")
+    text = (choices[0].get("message") or {}).get("content", "")
+    if choices[0].get("finish_reason") == "length":
+        text += _TRUNCATION_NOTE
+    return text
 
 
 def generate_insights(data: dict, provider: str | None = None, model: str | None = None) -> str:
