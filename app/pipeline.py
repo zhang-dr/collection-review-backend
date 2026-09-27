@@ -232,6 +232,32 @@ def parse_billing(file_bytes: bytes, file_label: str, warnings: list[ParseWarnin
     return df[["route_id", "cost", "depot_canon"]]
 
 
+def _empty_billing_df() -> pd.DataFrame:
+    return pd.DataFrame(columns=["route_id", "cost", "depot_canon"])
+
+
+# ---------------------------------------------------------------------------
+# Empty placeholder for a depot/date with no uploaded route-info file —
+# lets a depot that simply didn't operate that period flow through every
+# downstream aggregation as "zero routes" instead of a hard error.
+# ---------------------------------------------------------------------------
+
+_ROUTE_LEVEL_COLUMNS = ["route_id", "driver", "vehicle", "est_dur", "est_dist", "est_pickup",
+                        "act_dur", "act_dist", "act_pickup", "bulkout", "completed", "cancelled", "depot"]
+
+
+def _empty_route_level(depot: str) -> pd.DataFrame:
+    df = pd.DataFrame(columns=_ROUTE_LEVEL_COLUMNS)
+    for c in ["est_dur", "est_dist", "est_pickup", "act_dur", "act_dist", "act_pickup", "completed", "cancelled"]:
+        df[c] = pd.to_numeric(df[c], errors="coerce")
+    df["depot"] = depot
+    return df
+
+
+def _empty_cancel_df() -> pd.DataFrame:
+    return pd.DataFrame(columns=["route_id", "depot", "seller", "fail_reason", "job_pickup_est"])
+
+
 # ---------------------------------------------------------------------------
 # AB-scan overrides
 # ---------------------------------------------------------------------------
@@ -353,9 +379,17 @@ class ComputeInputs:
     date_a_label: str
     date_b_label: str
     depot_files: list[DepotDateInput]
-    billing_a_bytes: bytes
-    billing_b_bytes: bytes
-    opc: dict  # {"Manchester": {"a": 16114, "b": 14075}, ...}
+    # Both billing files are optional — a period with no billing upload just
+    # has no cost data (£/parcel etc. come back as N/A for it) instead of
+    # erroring out. This supports depots/periods where cost data genuinely
+    # isn't available yet.
+    billing_a_bytes: Optional[bytes] = None
+    billing_b_bytes: Optional[bytes] = None
+    # opc[depot][dk] is optional per depot/date. Any depot/date left out (or
+    # explicitly None/blank) falls back to that depot's route-level actual
+    # pickup total (sum of each route's own Actual Total Pickup, with any
+    # AB-scan override applied) — see `opc_source` in the result.
+    opc: dict = field(default_factory=dict)  # {"Manchester": {"a": 16114, "b": 14075}, ...}
     ab_overrides: list[AbScanOverride] = field(default_factory=list)
 
 
@@ -371,13 +405,34 @@ def compute_report(inp: ComputeInputs) -> dict:
         cancel_by_depot_date[(f.depot, f.date_key)] = parse_cancellations(f.route_bytes, f.depot)
         merch_by_depot_date[(f.depot, f.date_key)] = merchant_counts(f.route_bytes)
 
+    # A depot/date with no uploaded route-info file is treated as "did not
+    # operate that period" — zero routes, flows through every aggregation
+    # below without special-casing — rather than a hard error. This is what
+    # lets some depots run and others not in a given comparison.
+    depot_active: dict[tuple[str, str], bool] = {}
     for depot in DEPOTS:
         for dk in ("a", "b"):
-            if (depot, dk) not in route_by_depot_date:
-                raise ValueError(f"Missing route-info upload for {depot} / date {dk}.")
+            active = (depot, dk) in route_by_depot_date
+            depot_active[(depot, dk)] = active
+            if not active:
+                route_by_depot_date[(depot, dk)] = _empty_route_level(depot)
+                cancel_by_depot_date[(depot, dk)] = _empty_cancel_df()
+                merch_by_depot_date[(depot, dk)] = (0, 0)
+                warnings.append(ParseWarning(f"{depot} / {dk}", "No route-info file uploaded — treated as not operating this period."))
 
-    billing_a = parse_billing(inp.billing_a_bytes, "billing (date a)", warnings)
-    billing_b = parse_billing(inp.billing_b_bytes, "billing (date b)", warnings)
+    if all(not depot_active[(depot, dk)] for depot in DEPOTS for dk in ("a", "b")):
+        raise ValueError("No route-info files were uploaded for either period — nothing to analyze.")
+
+    if inp.billing_a_bytes:
+        billing_a = parse_billing(inp.billing_a_bytes, "billing (date a)", warnings)
+    else:
+        billing_a = _empty_billing_df()
+        warnings.append(ParseWarning("billing (date a)", "No billing file uploaded — costs for this period will show as N/A."))
+    if inp.billing_b_bytes:
+        billing_b = parse_billing(inp.billing_b_bytes, "billing (date b)", warnings)
+    else:
+        billing_b = _empty_billing_df()
+        warnings.append(ParseWarning("billing (date b)", "No billing file uploaded — costs for this period will show as N/A."))
 
     def merge_cost(route_df: pd.DataFrame, billing_df: pd.DataFrame, depot: str) -> pd.DataFrame:
         b = billing_df.copy()
@@ -410,33 +465,78 @@ def compute_report(inp: ComputeInputs) -> dict:
             ab_applied_all.extend(applied)
 
     # ---- per-depot / network summary ----
+    # OPC is optional per depot/date: any value the caller left out (or gave
+    # as None/blank) falls back to that depot's route-level actual-pickup
+    # total. opc_source records which happened, per depot/date, so the
+    # frontend can disclose it rather than silently presenting a fallback
+    # number as if it were the OPC-corrected figure.
+    opc_source: dict[str, dict[str, str]] = {}
     summary = {}
     for depot in DEPOTS:
         a, b = full[(depot, "a")], full[(depot, "b")]
-        cost_a, cost_b = a["cost"].sum(skipna=True), b["cost"].sum(skipna=True)
-        opc_a = inp.opc[depot]["a"]
-        opc_b = inp.opc[depot]["b"]
+        # sum(skipna=True) on an all-NaN column silently returns 0.0, which
+        # would misreport "no billing uploaded" as "genuinely zero cost".
+        # Only sum when at least one route actually has a matched cost.
+        cost_a = float(a["cost"].sum(skipna=True)) if a["cost"].notna().any() else None
+        cost_b = float(b["cost"].sum(skipna=True)) if b["cost"].notna().any() else None
+
+        depot_opc = inp.opc.get(depot) or {}
+        raw_opc_a = depot_opc.get("a")
+        raw_opc_b = depot_opc.get("b")
+        route_actual_a = float(a["act_pickup"].sum(skipna=True))
+        route_actual_b = float(b["act_pickup"].sum(skipna=True))
+        if raw_opc_a not in (None, ""):
+            opc_a = float(raw_opc_a)
+            src_a = "manual"
+        else:
+            opc_a = route_actual_a
+            src_a = "fallback"
+        if raw_opc_b not in (None, ""):
+            opc_b = float(raw_opc_b)
+            src_b = "manual"
+        else:
+            opc_b = route_actual_b
+            src_b = "fallback"
+        opc_source[depot] = {"a": src_a, "b": src_b}
+        if src_a == "fallback" and depot_active[(depot, "a")]:
+            warnings.append(ParseWarning(f"{depot} / a", "No OPC entered — using route-level actual pickup instead."))
+        if src_b == "fallback" and depot_active[(depot, "b")]:
+            warnings.append(ParseWarning(f"{depot} / b", "No OPC entered — using route-level actual pickup instead."))
+
         f_a, f_b = a["est_pickup"].sum(), b["est_pickup"].sum()
         cancel_a = len(cancel_by_depot_date[(depot, "a")])
         cancel_b = len(cancel_by_depot_date[(depot, "b")])
         completed_a = int(a["completed"].sum())
         completed_b = int(b["completed"].sum())
         mf_b, ma_b = merch_by_depot_date[(depot, "b")]
+        # routes14/21 = total distinct routes that depot ran that period
+        # (NOT "routes with a matched billing cost" — billing is optional now,
+        # so that would misreport an active depot with no billing file as
+        # having zero routes). billed_routes tracks the cost-match count
+        # separately, for data-quality / match-rate disclosure.
         summary[depot] = {
-            "routes14": int(a["cost"].notna().sum()), "routes21": int(b["cost"].notna().sum()),
-            "cost14": round(float(cost_a), 2), "cost21": round(float(cost_b), 2),
-            "act14": int(opc_a), "act21": int(opc_b),
-            "cpp14": round(float(cost_a) / opc_a, 4) if opc_a else None,
-            "cpp21": round(float(cost_b) / opc_b, 4) if opc_b else None,
+            "active_a": depot_active[(depot, "a")], "active_b": depot_active[(depot, "b")],
+            "routes14": int(len(a)), "routes21": int(len(b)),
+            "billed_routes14": int(a["cost"].notna().sum()), "billed_routes21": int(b["cost"].notna().sum()),
+            "cost14": round(cost_a, 2) if cost_a is not None else None,
+            "cost21": round(cost_b, 2) if cost_b is not None else None,
+            "act14": int(round(opc_a)), "act21": int(round(opc_b)),
+            "opc_source_a": src_a, "opc_source_b": src_b,
+            "cpp14": round(cost_a / opc_a, 4) if (cost_a is not None and opc_a) else None,
+            "cpp21": round(cost_b / opc_b, 4) if (cost_b is not None and opc_b) else None,
             "f14": int(f_a), "f21": int(f_b),
             "c14": completed_a, "x14": int(cancel_a),
             "c21": completed_b, "x21": int(cancel_b),
             "merch_f21": int(mf_b), "merch_a21": int(ma_b),
         }
 
+    def _sum_or_none(values):
+        present = [v for v in values if v is not None]
+        return round(sum(present), 2) if present else None
+
     net = {
-        "cost14": round(sum(summary[d]["cost14"] for d in DEPOTS), 2),
-        "cost21": round(sum(summary[d]["cost21"] for d in DEPOTS), 2),
+        "cost14": _sum_or_none(summary[d]["cost14"] for d in DEPOTS),
+        "cost21": _sum_or_none(summary[d]["cost21"] for d in DEPOTS),
         "act14": sum(summary[d]["act14"] for d in DEPOTS),
         "act21": sum(summary[d]["act21"] for d in DEPOTS),
         "routes14": sum(summary[d]["routes14"] for d in DEPOTS),
@@ -444,10 +544,12 @@ def compute_report(inp: ComputeInputs) -> dict:
         "f14": sum(summary[d]["f14"] for d in DEPOTS),
         "f21": sum(summary[d]["f21"] for d in DEPOTS),
     }
-    net["cpp14"] = round(net["cost14"] / net["act14"], 4) if net["act14"] else None
-    net["cpp21"] = round(net["cost21"] / net["act21"], 4) if net["act21"] else None
+    net["cpp14"] = round(net["cost14"] / net["act14"], 4) if (net["cost14"] is not None and net["act14"]) else None
+    net["cpp21"] = round(net["cost21"] / net["act21"], 4) if (net["cost21"] is not None and net["act21"]) else None
     net["ppr14"] = round(net["act14"] / net["routes14"], 2) if net["routes14"] else None
     net["ppr21"] = round(net["act21"] / net["routes21"], 2) if net["routes21"] else None
+    net["active_depots_a"] = [d for d in DEPOTS if depot_active[(d, "a")]]
+    net["active_depots_b"] = [d for d in DEPOTS if depot_active[(d, "b")]]
 
     forecast = {depot: {"f14": summary[depot]["f14"], "a14": summary[depot]["act14"],
                          "f21": summary[depot]["f21"], "a21": summary[depot]["act21"]} for depot in DEPOTS}
@@ -589,10 +691,11 @@ def compute_report(inp: ComputeInputs) -> dict:
         total_dur = p["act_dur"].sum(skipna=True)
         g = p.groupby("veh_class").agg(
             routes=("route_id", "count"), dur=("act_dur", "sum"),
-            cost=("cost", "sum"), act=("act_pickup", "sum"),
+            cost=("cost", "sum"), cost_n=("cost", "count"), act=("act_pickup", "sum"),
         )
         g["route_share"] = g["routes"] / total_routes * 100 if total_routes else np.nan
         g["dur_share"] = g["dur"] / total_dur * 100 if total_dur else np.nan
+        g.loc[g["cost_n"] == 0, "cost"] = np.nan  # no billing matched for this group — not genuinely £0
         g["cpp"] = g["cost"] / g["act"]
         return g
 
@@ -678,5 +781,7 @@ def compute_report(inp: ComputeInputs) -> dict:
         "vehicle_mix": vehicle_mix,
         "duration_buckets": duration_buckets,
         "bscan_candidates": bscan_candidates,
+        "depot_active": {d: {"a": depot_active[(d, "a")], "b": depot_active[(d, "b")]} for d in DEPOTS},
+        "opc_source": opc_source,
         "warnings": [f"{w.file_label}: {w.message}" for w in warnings],
     }
