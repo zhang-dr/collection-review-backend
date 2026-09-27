@@ -16,14 +16,31 @@ if (location.pathname !== "/" && !location.pathname.endsWith("/")) {
 <header class="top">
   <div>
     <h1>Collection Network Review <span class="cn-title">揽收网络复盘工具</span></h1>
-    <div class="sub">Upload → auto-compute → weekly diagnostic 上传数据自动生成周度诊断报告</div>
+    <div class="sub">Upload → auto-compute → diagnostic report 上传数据自动生成诊断报告</div>
   </div>
   <nav class="tabs">
     <button data-view="upload" class="active">上传数据 Upload</button>
     <button data-view="report">报告 Report</button>
     <button data-view="history">历史 History</button>
   </nav>
+  <div class="userbar" id="userbar" hidden>
+    <span>已登录 <span class="uname" id="userbarName"></span></span>
+    <button type="button" id="btn-logout">登出 Logout</button>
+  </div>
 </header>
+
+<!-- ==================== LOGIN GATE ==================== -->
+<div class="login-gate" id="loginGate">
+  <div class="login-card">
+    <h2>登录 <span class="cn" style="font-weight:400;color:var(--muted);">Login</span></h2>
+    <p class="sub">用户名首次登录即自动创建账号。<span style="display:block;">First login with a new username creates the account automatically.</span></p>
+    <div class="field"><label>用户名 <span class="cn">Username</span></label><input type="text" id="f-login-user" autocomplete="username"></div>
+    <div class="field"><label>密码（可选）<span class="cn">Password — optional</span></label><input type="password" id="f-login-pass" autocomplete="current-password"></div>
+    <button class="primary" id="btn-login" type="button" style="width:100%;">登录 / 创建账号 Login</button>
+    <div id="loginError" class="msg error" style="display:none;margin-top:12px;margin-bottom:0;"></div>
+    <p class="hint">报告会记录你的用户名作为作者。密码只是用来防止别人用同一个用户名登录，不是完整的账号安全体系，请勿用重要密码。<span style="display:block;margin-top:4px;">The report author is taken from your username. The password just stops someone else logging in as the same name — it isn't a real security system, so don't reuse an important password.</span></p>
+  </div>
+</div>
 
 <div class="wrap">
 
@@ -32,21 +49,47 @@ if (location.pathname !== "/" && !location.pathname.endsWith("/")) {
   <!-- ==================== UPLOAD VIEW ==================== -->
   <section id="view-upload" class="view active">
     <div class="panel">
-      <h3><span class="stepnum">1</span><span>基本信息 <span class="cn">Report basics</span></span></h3>
-      <div class="grid3">
-        <div class="field"><label>日期A（较早）<span class="cn">Date A (earlier)</span></label><input type="date" id="f-date-a"></div>
-        <div class="field"><label>日期B（较晚）<span class="cn">Date B (later)</span></label><input type="date" id="f-date-b"></div>
-        <div class="field"><label>报告名称 <span class="cn">Report name — auto-generated from dates, editable</span></label><input type="text" id="f-name" placeholder="选择日期后自动生成 / auto-fills once dates are picked"></div>
+      <h3><span class="stepnum">1</span><span>对比类型 <span class="cn">Comparison type</span></span></h3>
+      <div class="gran-row" id="gran-row">
+        <button type="button" class="gran-btn" data-gran="day"><strong>日对比</strong><span class="cn">Day vs day</span></button>
+        <button type="button" class="gran-btn" data-gran="week"><strong>周对比</strong><span class="cn">Week vs week (date range)</span></button>
+        <button type="button" class="gran-btn" data-gran="month"><strong>月对比</strong><span class="cn">Month vs month (date range)</span></button>
       </div>
     </div>
 
     <div class="panel">
-      <h3><span class="stepnum">2</span><span>各仓 Route Info 文件 <span class="cn">Per-depot route-info CSVs — 3仓 × 2日期 = 6个文件</span></span></h3>
+      <h3><span class="stepnum">2</span><span>基本信息 <span class="cn">Report basics</span></span></h3>
+      <div class="grid3" id="daymode-fields">
+        <div class="field"><label>日期A（较早）<span class="cn">Date A (earlier)</span></label><input type="date" id="f-date-a"></div>
+        <div class="field"><label>日期B（较晚）<span class="cn">Date B (later)</span></label><input type="date" id="f-date-b"></div>
+        <div class="field"><label>报告名称 <span class="cn">Report name — auto-generated from dates, editable</span></label><input type="text" id="f-name-day" class="f-name-input" placeholder="选择日期后自动生成 / auto-fills once dates are picked"></div>
+      </div>
+      <div class="grid2" id="rangemode-fields" hidden>
+        <div class="field">
+          <label>周期A（较早）<span class="cn">Period A (earlier) — start → end</span></label>
+          <div class="rangefield">
+            <input type="date" id="f-date-a-start" title="Period A start">
+            <input type="date" id="f-date-a-end" title="Period A end">
+          </div>
+        </div>
+        <div class="field">
+          <label>周期B（较晚）<span class="cn">Period B (later) — start → end</span></label>
+          <div class="rangefield">
+            <input type="date" id="f-date-b-start" title="Period B start">
+            <input type="date" id="f-date-b-end" title="Period B end">
+          </div>
+        </div>
+        <div class="field" style="grid-column:1/-1;"><label>报告名称 <span class="cn">Report name — auto-generated from dates, editable</span></label><input type="text" id="f-name-range" class="f-name-input" placeholder="选择日期后自动生成 / auto-fills once dates are picked"></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h3><span class="stepnum">3</span><span>各仓 Route Info 文件 <span class="cn">Per-depot route-info CSVs — 3仓 × 2期 = 6个文件</span></span></h3>
       <div class="grid3" id="route-file-grid"></div>
     </div>
 
     <div class="panel">
-      <h3><span class="stepnum">3</span><span>Billing 结算文件 <span class="cn">Network-wide billing CSV — 每个日期1个文件，覆盖三仓</span></span></h3>
+      <h3><span class="stepnum">4</span><span>Billing 结算文件 <span class="cn">Network-wide billing CSV — 每期1个文件，覆盖三仓</span></span></h3>
       <div class="grid2">
         <div class="field dropzone">
           <label>日期A Billing</label>
@@ -74,12 +117,12 @@ if (location.pathname !== "/" && !location.pathname.endsWith("/")) {
     </div>
 
     <div class="panel">
-      <h3><span class="stepnum">4</span><span>OPC 修正后实际揽收量 <span class="cn">OPC-corrected actual pickup — 手动填写，3仓 × 2日期</span></span></h3>
+      <h3><span class="stepnum">5</span><span>OPC 修正后实际揽收量 <span class="cn">OPC-corrected actual pickup — 手动填写，3仓 × 2期</span></span></h3>
       <div class="grid3" id="opc-grid"></div>
     </div>
 
     <div class="panel">
-      <h3><span class="stepnum">5</span><span>AB Scan 差异修正 <span class="cn">AB-scan overrides — 可选，逐条添加</span></span></h3>
+      <h3><span class="stepnum">6</span><span>AB Scan 差异修正 <span class="cn">AB-scan overrides — 可选，逐条添加</span></span></h3>
       <div id="ab-rows"></div>
       <button class="secondary small" id="btn-add-ab" type="button">+ 添加一条 Add row</button>
     </div>
