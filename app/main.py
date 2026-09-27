@@ -41,6 +41,12 @@ def require_admin(user: dict = Depends(require_user)) -> dict:
     return user
 
 
+def require_ai_access(user: dict = Depends(require_user)) -> dict:
+    if user["username"] != ADMIN_USERNAME and not bool(user.get("can_use_ai")):
+        raise HTTPException(status_code=403, detail="AI access has not been enabled for this account / 此账号未开通AI权限")
+    return user
+
+
 @app.get("/api/health")
 def health():
     return {"ok": True}
@@ -71,7 +77,9 @@ def api_logout(authorization: str | None = Header(None)):
 
 @app.get("/api/auth/me")
 def api_me(user: dict = Depends(require_user)):
-    return {"username": user["username"], "is_admin": user["username"] == ADMIN_USERNAME}
+    is_admin = user["username"] == ADMIN_USERNAME
+    return {"username": user["username"], "is_admin": is_admin,
+            "can_use_ai": is_admin or bool(user.get("can_use_ai"))}
 
 
 @app.post("/api/auth/users")
@@ -82,6 +90,26 @@ def api_create_user(username: str = Form(...), password: str = Form(...),
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return {"username": user["username"], "created": True}
+
+
+@app.get("/api/admin/users")
+def api_list_users(admin: dict = Depends(require_admin)):
+    return [{"id": u["id"], "username": u["username"],
+             "can_use_ai": u["username"] == ADMIN_USERNAME or bool(u["can_use_ai"]),
+             "is_admin": u["username"] == ADMIN_USERNAME} for u in db.list_users()]
+
+
+@app.post("/api/admin/users/{user_id}/ai-access")
+def api_set_user_ai_access(user_id: int, allowed: bool = Form(...),
+                           admin: dict = Depends(require_admin)):
+    users = {u["id"]: u for u in db.list_users()}
+    target = users.get(user_id)
+    if target is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    if target["username"] == ADMIN_USERNAME and not allowed:
+        raise HTTPException(status_code=400, detail="Administrator AI access cannot be disabled")
+    db.set_user_ai_access(user_id, allowed)
+    return {"username": target["username"], "can_use_ai": bool(allowed)}
 
 
 @app.get("/api/admin/ai-settings")
@@ -214,7 +242,7 @@ def api_insights_providers(user: dict = Depends(require_user)):
 
 @app.post("/api/reports/{report_id}/insights")
 def api_generate_insights(report_id: int, provider: Optional[str] = None, model: Optional[str] = None,
-                           force: bool = False, user: dict = Depends(require_user)):
+                           force: bool = False, user: dict = Depends(require_ai_access)):
     r = db.get_report(report_id)
     if r is None:
         raise HTTPException(status_code=404, detail="Report not found")
