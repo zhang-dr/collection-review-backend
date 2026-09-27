@@ -27,7 +27,7 @@ backend/
     pipeline.py    All the business logic (OPC/AB-scan handling, cost calcs,
                    forecast deviation, cancellation analysis, percentile-based
                    priority-route flagging, repeat-driver detection)
-    auth.py        Lightweight username(+optional password) login
+    auth.py        Password login with administrator-only account creation
     db.py          SQLite persistence (data/reports.db)
     insights.py    Optional AI-generated narrative — the only part of the
                    app that calls a third-party service (Claude / Gemini /
@@ -231,10 +231,10 @@ from the environment and calls the provider's API directly over HTTPS
 
 ## Before you expose this publicly: add access control
 
-Anyone who can log in (any username, first login auto-creates the account —
-see "Run it locally" above) can upload data and read every saved report.
-The built-in login is a convenience for telling reports apart by author, not
-a real security boundary — fine for a trusted team, not enough on its own
+Only accounts created by the configured administrator can log in. Authenticated
+users can upload data and read every saved report; report access is shared,
+not isolated per user. The built-in login is suitable for a trusted team but
+is not a complete enterprise identity system, so consider stronger controls
 once route-level commercial data (costs, driver names, merchant names) is on
 a public domain. Before putting it on your domain, also add access control
 at the reverse-proxy layer, e.g. nginx HTTP basic auth:
