@@ -9,7 +9,7 @@ if (location.pathname !== "/" && !location.pathname.endsWith("/")) {
 }
 </script>
 <title>Collection Network Review</title>
-<link rel="stylesheet" href="style.css?v=11">
+<link rel="stylesheet" href="style.css?v=12">
 </head>
 <body>
 
@@ -188,7 +188,7 @@ if (location.pathname !== "/" && !location.pathname.endsWith("/")) {
       <h3>AI 服务配置 <span class="cn">AI provider settings</span></h3>
       <p style="font-size:11.5px;color:var(--muted);margin:0 0 14px;">密钥只保存在服务器端，保存后不会再次显示。<span style="display:block;">Keys are stored server-side and are never displayed again.</span></p>
       <div class="grid3">
-        <div class="field"><label>服务商 <span class="cn">Provider</span></label><select id="f-ai-provider"><option value="openai">OpenAI</option><option value="claude">Claude</option><option value="gemini">Gemini</option></select></div>
+        <div class="field"><label>服务商 <span class="cn">Provider</span></label><select id="f-ai-provider"><option value="openai">OpenAI</option><option value="claude">Claude</option><option value="gemini">Gemini</option><option value="groq">Groq</option><option value="mistral">Mistral AI</option><option value="cerebras">Cerebras</option><option value="openrouter">OpenRouter</option></select></div>
         <div class="field"><label>API 密钥 <span class="cn">API key</span></label><input type="password" id="f-ai-key" autocomplete="off" placeholder="粘贴新的密钥"></div>
         <div class="field"><label>模型（可选）<span class="cn">Model — optional</span></label><input type="text" id="f-ai-model" placeholder="留空使用默认模型"></div>
       </div>
@@ -199,6 +199,6 @@ if (location.pathname !== "/" && !location.pathname.endsWith("/")) {
 
 </div>
 
-<script src="app.js?v=11"></script>
+<script src="app.js?v=12"></script>
 </body>
 </html>
