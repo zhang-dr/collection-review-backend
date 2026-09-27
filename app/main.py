@@ -1,12 +1,13 @@
 import json
 from pathlib import Path
+from typing import Optional
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import auth, db
+from . import auth, db, insights
 from .pipeline import AbScanOverride, ComputeInputs, DepotDateInput, compute_report
 
 app = FastAPI(title="Collection Network Review")
@@ -74,19 +75,24 @@ async def upload(
     date_a_label: str = Form(...),
     date_b_label: str = Form(...),
     granularity: str = Form("day"),
-    opc_json: str = Form(...),
+    opc_json: str = Form("{}"),
     ab_overrides_json: str = Form("[]"),
-    route_manchester_a: UploadFile = File(...),
-    route_manchester_b: UploadFile = File(...),
-    route_birmingham_a: UploadFile = File(...),
-    route_birmingham_b: UploadFile = File(...),
-    route_london_a: UploadFile = File(...),
-    route_london_b: UploadFile = File(...),
-    billing_a: UploadFile = File(...),
-    billing_b: UploadFile = File(...),
+    # Every depot's route-info file is optional — a depot that didn't operate
+    # a given period simply isn't uploaded for it, rather than blocking the
+    # whole report. Billing is optional too (costs come back as N/A for a
+    # period with none). compute_report() itself enforces that at least one
+    # route-info file was uploaded somewhere.
+    route_manchester_a: Optional[UploadFile] = File(None),
+    route_manchester_b: Optional[UploadFile] = File(None),
+    route_birmingham_a: Optional[UploadFile] = File(None),
+    route_birmingham_b: Optional[UploadFile] = File(None),
+    route_london_a: Optional[UploadFile] = File(None),
+    route_london_b: Optional[UploadFile] = File(None),
+    billing_a: Optional[UploadFile] = File(None),
+    billing_b: Optional[UploadFile] = File(None),
 ):
     try:
-        opc = json.loads(opc_json)
+        opc = json.loads(opc_json) if opc_json else {}
         overrides_raw = json.loads(ab_overrides_json)
         overrides = [
             AbScanOverride(
@@ -99,21 +105,22 @@ async def upload(
             if o.get("route_id") and o.get("override_value") not in (None, "")
         ]
 
-        depot_files = [
-            DepotDateInput("Manchester", "a", await route_manchester_a.read(), route_manchester_a.filename),
-            DepotDateInput("Manchester", "b", await route_manchester_b.read(), route_manchester_b.filename),
-            DepotDateInput("Birmingham", "a", await route_birmingham_a.read(), route_birmingham_a.filename),
-            DepotDateInput("Birmingham", "b", await route_birmingham_b.read(), route_birmingham_b.filename),
-            DepotDateInput("London", "a", await route_london_a.read(), route_london_a.filename),
-            DepotDateInput("London", "b", await route_london_b.read(), route_london_b.filename),
+        route_uploads = [
+            ("Manchester", "a", route_manchester_a), ("Manchester", "b", route_manchester_b),
+            ("Birmingham", "a", route_birmingham_a), ("Birmingham", "b", route_birmingham_b),
+            ("London", "a", route_london_a), ("London", "b", route_london_b),
         ]
+        depot_files = []
+        for depot, dk, upload_file in route_uploads:
+            if upload_file is not None and upload_file.filename:
+                depot_files.append(DepotDateInput(depot, dk, await upload_file.read(), upload_file.filename))
 
         inp = ComputeInputs(
             date_a_label=date_a_label,
             date_b_label=date_b_label,
             depot_files=depot_files,
-            billing_a_bytes=await billing_a.read(),
-            billing_b_bytes=await billing_b.read(),
+            billing_a_bytes=(await billing_a.read()) if (billing_a is not None and billing_a.filename) else None,
+            billing_b_bytes=(await billing_b.read()) if (billing_b is not None and billing_b.filename) else None,
             opc=opc,
             ab_overrides=overrides,
         )
@@ -148,6 +155,35 @@ def api_delete_report(report_id: int, user: dict = Depends(require_user)):
     if not ok:
         raise HTTPException(status_code=404, detail="Report not found")
     return {"deleted": True}
+
+
+# ---------------------------------------------------------------------------
+# AI-generated insights — the only part of this app that calls a third-party
+# service, and only ever on explicit user request (never automatically).
+# Multiple providers are supported; /api/insights/providers tells the
+# frontend which ones actually have an API key configured on this server.
+# ---------------------------------------------------------------------------
+
+@app.get("/api/insights/providers")
+def api_insights_providers(user: dict = Depends(require_user)):
+    return {"default": insights.DEFAULT_PROVIDER, "providers": insights.available_providers()}
+
+
+@app.post("/api/reports/{report_id}/insights")
+def api_generate_insights(report_id: int, provider: Optional[str] = None, model: Optional[str] = None,
+                           force: bool = False, user: dict = Depends(require_user)):
+    r = db.get_report(report_id)
+    if r is None:
+        raise HTTPException(status_code=404, detail="Report not found")
+    if not force and r.get("insights") and (provider is None or provider == r.get("insights_provider")):
+        return {"insights": r["insights"], "provider": r.get("insights_provider"), "cached": True}
+    try:
+        text = insights.generate_insights(r["data"], provider=provider, model=model)
+    except insights.InsightsError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    used_provider = (provider or insights.DEFAULT_PROVIDER).lower()
+    db.save_insights(report_id, text, used_provider)
+    return {"insights": text, "provider": used_provider, "cached": False}
 
 
 # ---- static frontend (mounted last so /api routes take priority) ----
