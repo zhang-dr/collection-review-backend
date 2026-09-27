@@ -34,6 +34,76 @@ function showMsg(text, kind = "info") {
   if (kind !== "error") setTimeout(() => { box.innerHTML = ""; }, 6000);
 }
 
+/* ---------------- auth: lightweight username(+optional password) login ----------------
+   Not a real security system — see the copy on the login card. First login
+   for a given username creates the account with whatever password was
+   given; later logins with that username must match it. The token is kept
+   in localStorage and sent as an Authorization: Bearer header on every
+   API call that needs an identity (upload, history). */
+const AUTH_TOKEN_KEY = "crna_token";
+const AUTH_USER_KEY = "crna_username";
+let currentUser = null;
+
+function authHeaders() {
+  const token = localStorage.getItem(AUTH_TOKEN_KEY);
+  return token ? { Authorization: "Bearer " + token } : {};
+}
+function showLoginGate() {
+  document.getElementById("loginGate").style.display = "flex";
+  document.getElementById("userbar").hidden = true;
+}
+function hideLoginGate() {
+  document.getElementById("loginGate").style.display = "none";
+  document.getElementById("userbar").hidden = false;
+  document.getElementById("userbarName").textContent = currentUser || "";
+}
+async function checkAuth() {
+  const token = localStorage.getItem(AUTH_TOKEN_KEY);
+  if (!token) { showLoginGate(); return; }
+  try {
+    const resp = await fetch(API_BASE + "auth/me", { headers: authHeaders() });
+    if (!resp.ok) throw new Error("invalid session");
+    const body = await resp.json();
+    currentUser = body.username;
+    hideLoginGate();
+  } catch (e) {
+    localStorage.removeItem(AUTH_TOKEN_KEY);
+    localStorage.removeItem(AUTH_USER_KEY);
+    showLoginGate();
+  }
+}
+document.getElementById("btn-login").addEventListener("click", async () => {
+  const username = document.getElementById("f-login-user").value.trim();
+  const password = document.getElementById("f-login-pass").value;
+  const errBox = document.getElementById("loginError");
+  errBox.style.display = "none";
+  if (!username) { errBox.textContent = "请输入用户名 / Username is required"; errBox.style.display = "block"; return; }
+  try {
+    const fd = new FormData();
+    fd.append("username", username);
+    fd.append("password", password);
+    const resp = await fetch(API_BASE + "auth/login", { method: "POST", body: fd });
+    const body = await resp.json();
+    if (!resp.ok) throw new Error(body.detail || "Login failed");
+    localStorage.setItem(AUTH_TOKEN_KEY, body.token);
+    localStorage.setItem(AUTH_USER_KEY, body.username);
+    currentUser = body.username;
+    hideLoginGate();
+  } catch (e) {
+    errBox.textContent = "登录失败 / " + e.message;
+    errBox.style.display = "block";
+  }
+});
+document.getElementById("f-login-pass").addEventListener("keydown", e => { if (e.key === "Enter") document.getElementById("btn-login").click(); });
+document.getElementById("btn-logout").addEventListener("click", async () => {
+  try { await fetch(API_BASE + "auth/logout", { method: "POST", headers: authHeaders() }); } catch (e) { /* ignore */ }
+  localStorage.removeItem(AUTH_TOKEN_KEY);
+  localStorage.removeItem(AUTH_USER_KEY);
+  currentUser = null;
+  showLoginGate();
+});
+checkAuth();
+
 /* ---------------- navigation ---------------- */
 document.querySelectorAll("nav.tabs button").forEach(btn => {
   btn.addEventListener("click", () => switchView(btn.dataset.view));
@@ -114,6 +184,17 @@ DEPOTS.forEach(depot => {
   opcGrid.appendChild(og);
 });
 
+/* ---------------- comparison granularity (day / week / month) ---------------- */
+const GRAN_LABEL = { day: { en: "Day vs day", cn: "日对比" }, week: { en: "Week vs week", cn: "周对比" }, month: { en: "Month vs month", cn: "月对比" } };
+let granState = "day";
+function setGranularity(g) {
+  granState = g;
+  document.querySelectorAll(".gran-btn").forEach(b => b.classList.toggle("active", b.dataset.gran === g));
+  document.getElementById("daymode-fields").hidden = g !== "day";
+  document.getElementById("rangemode-fields").hidden = g === "day";
+  regenerateName();
+}
+
 /* ---------------- date pickers -> auto report name ---------------- */
 const MONTH_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 function parseDateVal(v) {
@@ -124,19 +205,45 @@ function parseDateVal(v) {
 }
 function shortDots(v) { const p = parseDateVal(v); return p ? `${p.m}.${p.d}` : ""; }
 function dayMonthLabel(v) { const p = parseDateVal(v); return p ? `${p.d} ${MONTH_ABBR[p.m - 1]}` : ""; }
+// range (week/month) labels: "1-7 Sep" when both ends fall in the same
+// month, "28 Aug - 3 Sep" when the range crosses a month boundary.
+function rangeShortDots(startVal, endVal) {
+  const s = parseDateVal(startVal), e = parseDateVal(endVal);
+  if (!s || !e) return "";
+  return `${s.m}.${s.d}-${e.m}.${e.d}`;
+}
+function rangeLabel(startVal, endVal) {
+  const s = parseDateVal(startVal), e = parseDateVal(endVal);
+  if (!s || !e) return "";
+  return s.m === e.m ? `${s.d}-${e.d} ${MONTH_ABBR[s.m - 1]}` : `${s.d} ${MONTH_ABBR[s.m - 1]} - ${e.d} ${MONTH_ABBR[e.m - 1]}`;
+}
 
-const nameInput = document.getElementById("f-name");
+const dayNameInput = document.getElementById("f-name-day");
+const rangeNameInput = document.getElementById("f-name-range");
 const dateAInput = document.getElementById("f-date-a");
 const dateBInput = document.getElementById("f-date-b");
-let nameManuallyEdited = false;
-nameInput.addEventListener("input", () => { nameManuallyEdited = true; });
+const dateAStartInput = document.getElementById("f-date-a-start");
+const dateAEndInput = document.getElementById("f-date-a-end");
+const dateBStartInput = document.getElementById("f-date-b-start");
+const dateBEndInput = document.getElementById("f-date-b-end");
+let nameManuallyEdited = { day: false, range: false };
+dayNameInput.addEventListener("input", () => { nameManuallyEdited.day = true; });
+rangeNameInput.addEventListener("input", () => { nameManuallyEdited.range = true; });
 function regenerateName() {
-  if (nameManuallyEdited) return;
-  const a = dateAInput.value, b = dateBInput.value;
-  if (a && b) nameInput.value = `${shortDots(a)}对比${shortDots(b)}`;
+  if (granState === "day") {
+    if (nameManuallyEdited.day) return;
+    const a = dateAInput.value, b = dateBInput.value;
+    if (a && b) dayNameInput.value = `${shortDots(a)}对比${shortDots(b)}`;
+  } else {
+    if (nameManuallyEdited.range) return;
+    const as = dateAStartInput.value, ae = dateAEndInput.value, bs = dateBStartInput.value, be = dateBEndInput.value;
+    if (as && ae && bs && be) rangeNameInput.value = `${rangeShortDots(as, ae)}对比${rangeShortDots(bs, be)}`;
+  }
 }
-dateAInput.addEventListener("change", regenerateName);
-dateBInput.addEventListener("change", regenerateName);
+[dateAInput, dateBInput, dateAStartInput, dateAEndInput, dateBStartInput, dateBEndInput].forEach(el => el.addEventListener("change", regenerateName));
+
+document.querySelectorAll(".gran-btn").forEach(b => b.addEventListener("click", () => setGranularity(b.dataset.gran)));
+setGranularity("day");
 
 /* ---------------- AB-scan override rows ---------------- */
 const abRows = document.getElementById("ab-rows");
@@ -173,13 +280,22 @@ function collectAbOverrides() {
 document.getElementById("btn-submit").addEventListener("click", async () => {
   const btn = document.getElementById("btn-submit");
   const status = document.getElementById("submit-status");
-  const name = document.getElementById("f-name").value.trim();
-  const dateARaw = document.getElementById("f-date-a").value;
-  const dateBRaw = document.getElementById("f-date-b").value;
 
-  if (!name || !dateARaw || !dateBRaw) { showMsg("请填写报告名称并选择两个日期 / Please fill in report name and pick both dates", "error"); return; }
-  const dateA = dayMonthLabel(dateARaw);
-  const dateB = dayMonthLabel(dateBRaw);
+  let name, dateA, dateB;
+  if (granState === "day") {
+    name = dayNameInput.value.trim();
+    const dateARaw = dateAInput.value, dateBRaw = dateBInput.value;
+    if (!name || !dateARaw || !dateBRaw) { showMsg("请填写报告名称并选择两个日期 / Please fill in report name and pick both dates", "error"); return; }
+    dateA = dayMonthLabel(dateARaw);
+    dateB = dayMonthLabel(dateBRaw);
+  } else {
+    name = rangeNameInput.value.trim();
+    const as = dateAStartInput.value, ae = dateAEndInput.value, bs = dateBStartInput.value, be = dateBEndInput.value;
+    if (!name || !as || !ae || !bs || !be) { showMsg("请填写报告名称并选择两组起止日期 / Please fill in report name and both date ranges", "error"); return; }
+    if (as > ae || bs > be) { showMsg("起始日期不能晚于结束日期 / Start date must be before end date", "error"); return; }
+    dateA = rangeLabel(as, ae);
+    dateB = rangeLabel(bs, be);
+  }
 
   const opc = {};
   for (const depot of DEPOTS) {
@@ -194,6 +310,7 @@ document.getElementById("btn-submit").addEventListener("click", async () => {
   fd.append("name", name);
   fd.append("date_a_label", dateA);
   fd.append("date_b_label", dateB);
+  fd.append("granularity", granState);
   fd.append("opc_json", JSON.stringify(opc));
   fd.append("ab_overrides_json", JSON.stringify(collectAbOverrides()));
 
@@ -213,12 +330,13 @@ document.getElementById("btn-submit").addEventListener("click", async () => {
 
   btn.disabled = true; status.textContent = "计算中… Processing…";
   try {
-    const resp = await fetch(API_BASE + "upload", { method: "POST", body: fd });
+    const resp = await fetch(API_BASE + "upload", { method: "POST", headers: authHeaders(), body: fd });
+    if (resp.status === 401) { showLoginGate(); throw new Error("请先登录 / Please log in"); }
     const body = await resp.json();
     if (!resp.ok) throw new Error(body.detail || "Upload failed");
     showMsg("报告生成成功！Report generated.", "ok");
     status.textContent = "";
-    renderReport(body.data);
+    renderReport(body.data, { author: body.author, granularity: body.granularity, name: body.name });
     switchView("report");
   } catch (e) {
     showMsg("出错了 / Error: " + e.message, "error");
@@ -232,18 +350,21 @@ document.getElementById("btn-submit").addEventListener("click", async () => {
 async function loadHistory() {
   const list = document.getElementById("history-list");
   list.innerHTML = "加载中… Loading…";
-  const resp = await fetch(API_BASE + "reports");
+  const resp = await fetch(API_BASE + "reports", { headers: authHeaders() });
+  if (resp.status === 401) { showLoginGate(); list.innerHTML = ""; return; }
   const reports = await resp.json();
   if (!reports.length) { list.innerHTML = '<p class="na">还没有保存的报告 / No saved reports yet.</p>'; return; }
   list.innerHTML = "";
   reports.forEach(r => {
     const item = document.createElement("div");
     item.className = "history-item";
-    item.innerHTML = `<div><div style="font-weight:600;">${r.name}</div><div class="meta">${r.date_a_label} → ${r.date_b_label} · created ${r.created_at}</div></div><button class="secondary small">打开 Open</button>`;
+    const granTag = GRAN_LABEL[r.granularity] ? GRAN_LABEL[r.granularity].cn : "";
+    item.innerHTML = `<div><div style="font-weight:600;">${r.name}</div><div class="meta">${r.date_a_label} → ${r.date_b_label} · ${granTag} · 作者 ${r.author || 'N/A'} · created ${r.created_at}</div></div><button class="secondary small">打开 Open</button>`;
     item.addEventListener("click", async () => {
-      const resp2 = await fetch(`${API_BASE}reports/${r.id}`);
+      const resp2 = await fetch(`${API_BASE}reports/${r.id}`, { headers: authHeaders() });
+      if (resp2.status === 401) { showLoginGate(); return; }
       const full = await resp2.json();
-      renderReport(full.data);
+      renderReport(full.data, { author: full.author, granularity: full.granularity, name: full.name });
       switchView("report");
     });
     list.appendChild(item);
@@ -410,9 +531,9 @@ function renderMultiLine(container, series, xLabels) {
 /* ============================================================
    REPORT RENDERING — builds the report from a fetched JSON `D`
    ============================================================ */
-function renderReport(D) {
-  // Reports saved before v3 do not contain the new analysis sections.
-  // Default them here so historical reports remain viewable after the upgrade.
+function renderReport(D, meta = {}) {
+  // Reports saved before v3 do not contain the newer analysis sections.
+  // Default them here so historical reports remain viewable after upgrades.
   D.vehicle_mix = Array.isArray(D.vehicle_mix) ? D.vehicle_mix : [];
   D.duration_buckets = D.duration_buckets || {};
   D.bscan_candidates = Array.isArray(D.bscan_candidates) ? D.bscan_candidates : [];
@@ -420,7 +541,7 @@ function renderReport(D) {
   document.getElementById("report-empty").style.display = "none";
   const root = document.getElementById("report-content");
   root.style.display = "block";
-  root.innerHTML = buildReportSkeleton(D);
+  root.innerHTML = buildReportSkeleton(D, meta);
 
   const S = D.summary, NET = D.net, FORECAST = D.forecast;
   const gapNet14 = (NET.act14 / NET.f14 - 1) * 100, gapNet21 = (NET.act21 / NET.f21 - 1) * 100;
@@ -672,8 +793,16 @@ function renderReport(D) {
   }
 }
 
-function buildReportSkeleton(D) {
+function buildReportSkeleton(D, meta = {}) {
+  const granInfo = GRAN_LABEL[meta.granularity] || null;
+  const metaLine = (meta.author || granInfo) ? `
+  <p style="font-size:11.5px;color:var(--muted);margin:0 0 16px;display:flex;flex-wrap:wrap;gap:14px;">
+    ${meta.name ? `<span>${meta.name}</span>` : ''}
+    ${granInfo ? `<span>${granInfo.en}<span class="cn"> · ${granInfo.cn}</span></span>` : ''}
+    ${meta.author ? `<span>Author / 作者: <b style="color:var(--ink-soft);">${meta.author}</b></span>` : ''}
+  </p>` : '';
   return `
+  ${metaLine}
   <div class="kpirow" id="kpiRow"></div>
   <div id="warnNote" class="msg error" style="display:none;"></div>
 
