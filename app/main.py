@@ -1,52 +1,35 @@
 import json
-import os
-import secrets
-from base64 import b64decode
 from pathlib import Path
 
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import db
+from . import auth, db
 from .pipeline import AbScanOverride, ComputeInputs, DepotDateInput, compute_report
 
 app = FastAPI(title="Collection Network Review")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
-
-@app.middleware("http")
-async def basic_auth(request: Request, call_next):
-    if request.url.path == "/api/health":
-        return await call_next(request)
-
-    expected_user = os.getenv("AUTH_USERNAME")
-    expected_password = os.getenv("AUTH_PASSWORD")
-    if expected_user and expected_password:
-        try:
-            scheme, encoded = request.headers.get("Authorization", "").split(" ", 1)
-            username, password = b64decode(encoded).decode("utf-8").split(":", 1)
-            valid = (
-                scheme.lower() == "basic"
-                and secrets.compare_digest(username, expected_user)
-                and secrets.compare_digest(password, expected_password)
-            )
-        except (ValueError, UnicodeDecodeError):
-            valid = False
-
-        if not valid:
-            return JSONResponse(
-                {"detail": "Authentication required"},
-                status_code=401,
-                headers={"WWW-Authenticate": 'Basic realm="CBT Analysis"'},
-            )
-
-    return await call_next(request)
-
 db.init_db()
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
+
+
+def _token_from_header(authorization: str | None) -> str | None:
+    if not authorization:
+        return None
+    if authorization.lower().startswith("bearer "):
+        return authorization[7:].strip()
+    return authorization.strip()
+
+
+def require_user(authorization: str | None = Header(None)) -> dict:
+    user = auth.user_from_token(_token_from_header(authorization))
+    if user is None:
+        raise HTTPException(status_code=401, detail="Not logged in / 请先登录")
+    return user
 
 
 @app.get("/api/health")
@@ -54,11 +37,43 @@ def health():
     return {"ok": True}
 
 
+# ---------------------------------------------------------------------------
+# Auth — lightweight username(+optional password) login. First login for a
+# username creates the account; later logins with that username must match
+# the same password.
+# ---------------------------------------------------------------------------
+
+@app.post("/api/auth/login")
+def api_login(username: str = Form(...), password: str = Form("")):
+    try:
+        result = auth.login_or_register(username, password)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except PermissionError as e:
+        raise HTTPException(status_code=401, detail=str(e))
+    return result
+
+
+@app.post("/api/auth/logout")
+def api_logout(authorization: str | None = Header(None)):
+    token = _token_from_header(authorization)
+    if token:
+        db.delete_session(token)
+    return {"ok": True}
+
+
+@app.get("/api/auth/me")
+def api_me(user: dict = Depends(require_user)):
+    return {"username": user["username"]}
+
+
 @app.post("/api/upload")
 async def upload(
+    user: dict = Depends(require_user),
     name: str = Form(...),
     date_a_label: str = Form(...),
     date_b_label: str = Form(...),
+    granularity: str = Form("day"),
     opc_json: str = Form(...),
     ab_overrides_json: str = Form("[]"),
     route_manchester_a: UploadFile = File(...),
@@ -108,17 +123,19 @@ async def upload(
     except KeyError as e:
         raise HTTPException(status_code=400, detail=f"Missing OPC value for {e}")
 
-    report_id = db.save_report(name, date_a_label, date_b_label, result)
-    return {"id": report_id, "data": result}
+    report_id = db.save_report(name, date_a_label, date_b_label, result,
+                                author=user["username"], granularity=granularity)
+    return {"id": report_id, "data": result, "author": user["username"],
+            "name": name, "granularity": granularity}
 
 
 @app.get("/api/reports")
-def api_list_reports():
+def api_list_reports(user: dict = Depends(require_user)):
     return db.list_reports()
 
 
 @app.get("/api/reports/{report_id}")
-def api_get_report(report_id: int):
+def api_get_report(report_id: int, user: dict = Depends(require_user)):
     r = db.get_report(report_id)
     if r is None:
         raise HTTPException(status_code=404, detail="Report not found")
@@ -126,7 +143,7 @@ def api_get_report(report_id: int):
 
 
 @app.delete("/api/reports/{report_id}")
-def api_delete_report(report_id: int):
+def api_delete_report(report_id: int, user: dict = Depends(require_user)):
     ok = db.delete_report(report_id)
     if not ok:
         raise HTTPException(status_code=404, detail="Report not found")
