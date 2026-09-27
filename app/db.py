@@ -44,8 +44,17 @@ def init_db():
                 created_at TEXT NOT NULL DEFAULT (datetime('now'))
             )
         """)
-        if not _column_exists(conn, "users", "can_use_ai"):
-            conn.execute("ALTER TABLE users ADD COLUMN can_use_ai INTEGER NOT NULL DEFAULT 0")
+        # migration: admin-gated accounts + per-user AI-insights permission.
+        # Existing rows (accounts created back when any username could
+        # self-register) default to is_admin=0/ai_allowed=0 — an admin has
+        # to explicitly flip ai_allowed for them; the hardcoded admin
+        # username is self-healed to is_admin=1/ai_allowed=1 on every login
+        # in auth.py, so it doesn't matter whether this migration ran before
+        # or after that account first logged in.
+        if not _column_exists(conn, "users", "is_admin"):
+            conn.execute("ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0")
+        if not _column_exists(conn, "users", "ai_allowed"):
+            conn.execute("ALTER TABLE users ADD COLUMN ai_allowed INTEGER NOT NULL DEFAULT 0")
         conn.execute("""
             CREATE TABLE IF NOT EXISTS sessions (
                 token TEXT PRIMARY KEY,
@@ -142,27 +151,37 @@ def get_user_by_id(user_id: int) -> dict | None:
         return dict(row) if row else None
 
 
-def create_user(username: str, password_salt: str, password_hash: str) -> dict:
+def create_user(username: str, password_salt: str, password_hash: str,
+                 is_admin: bool = False, ai_allowed: bool = False) -> dict:
     with get_conn() as conn:
         cur = conn.execute(
-            "INSERT INTO users (username, password_salt, password_hash) VALUES (?, ?, ?)",
-            (username, password_salt, password_hash),
+            "INSERT INTO users (username, password_salt, password_hash, is_admin, ai_allowed) VALUES (?, ?, ?, ?, ?)",
+            (username, password_salt, password_hash, 1 if is_admin else 0, 1 if ai_allowed else 0),
         )
         conn.commit()
         return {"id": cur.lastrowid, "username": username,
                 "password_salt": password_salt, "password_hash": password_hash,
-                "can_use_ai": 0}
+                "is_admin": 1 if is_admin else 0, "ai_allowed": 1 if ai_allowed else 0}
 
 
 def list_users() -> list[dict]:
     with get_conn() as conn:
-        rows = conn.execute("SELECT id, username, can_use_ai, created_at FROM users ORDER BY username COLLATE NOCASE").fetchall()
+        rows = conn.execute(
+            "SELECT id, username, is_admin, ai_allowed, created_at FROM users ORDER BY username COLLATE NOCASE"
+        ).fetchall()
         return [dict(r) for r in rows]
 
 
-def set_user_ai_access(user_id: int, allowed: bool) -> bool:
+def set_ai_allowed(username: str, allowed: bool) -> bool:
     with get_conn() as conn:
-        cur = conn.execute("UPDATE users SET can_use_ai = ? WHERE id = ?", (1 if allowed else 0, user_id))
+        cur = conn.execute("UPDATE users SET ai_allowed = ? WHERE username = ?", (1 if allowed else 0, username))
+        conn.commit()
+        return cur.rowcount > 0
+
+
+def set_admin(username: str, is_admin: bool) -> bool:
+    with get_conn() as conn:
+        cur = conn.execute("UPDATE users SET is_admin = ? WHERE username = ?", (1 if is_admin else 0, username))
         conn.commit()
         return cur.rowcount > 0
 
