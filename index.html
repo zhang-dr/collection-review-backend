@@ -4,19 +4,19 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Collection Network Review</title>
-<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="style.css?v=20260927-single-day">
 </head>
-<body>
+<body class="logged-out">
 
 <header class="top">
   <div>
     <h1>Collection Network Review <span class="cn-title">揽收网络复盘工具</span></h1>
-    <div class="sub">Upload → auto-compute → diagnostic report 上传数据自动生成诊断报告</div>
+    <div class="sub">Upload → auto-compute → analytics dashboard 上传数据→自动计算→数据分析看板</div>
   </div>
   <nav class="tabs">
     <button data-view="upload" class="active">上传数据 Upload</button>
-    <button data-view="report">报告 Report</button>
-    <button data-view="history">历史 History</button>
+    <button data-view="report">看板 Dashboard</button>
+    <button data-view="history">历史看板 Saved dashboards</button>
     <button data-view="admin" id="navAdminBtn" hidden>管理 Admin</button>
   </nav>
   <div class="userbar" id="userbar" hidden>
@@ -31,10 +31,10 @@
     <h2>登录 <span class="cn" style="font-weight:400;color:var(--muted);">Login</span></h2>
     <p class="sub">账号需由管理员 Xihao 创建，如果还没有账号请联系管理员开通。<span style="display:block;">Accounts are created by the admin (Xihao) — contact them if you don't have one yet.</span></p>
     <div class="field"><label>用户名 <span class="cn">Username</span></label><input type="text" id="f-login-user" autocomplete="username"></div>
-    <div class="field"><label>密码（可选）<span class="cn">Password — optional</span></label><input type="password" id="f-login-pass" autocomplete="current-password"></div>
+    <div class="field"><label>密码 <span class="cn">Password</span></label><input type="password" id="f-login-pass" autocomplete="current-password" required></div>
     <button class="primary" id="btn-login" type="button" style="width:100%;">登录 Login</button>
     <div id="loginError" class="msg error" style="display:none;margin-top:12px;margin-bottom:0;"></div>
-    <p class="hint">报告会记录你的用户名作为作者。密码只是用来防止别人用同一个用户名登录，不是完整的账号安全体系，请勿用重要密码。<span style="display:block;margin-top:4px;">The report author is taken from your username. The password just stops someone else logging in as the same name — it isn't a real security system, so don't reuse an important password.</span></p>
+    <p class="hint">此处仅供已有账号登录，不会自动注册。新账号和密码由 Xihao 管理员创建。<span style="display:block;margin-top:4px;">This form only signs in existing accounts; it never registers a new account. New accounts and passwords are created by the Xihao administrator.</span></p>
   </div>
 </div>
 
@@ -57,52 +57,40 @@
   <!-- ==================== UPLOAD VIEW ==================== -->
   <section id="view-upload" class="view active">
     <div class="panel">
-      <h3><span class="stepnum">1</span><span>对比类型 <span class="cn">Comparison type</span></span></h3>
-      <div class="gran-row" id="gran-row">
-        <button type="button" class="gran-btn" data-gran="day"><strong>日对比</strong><span class="cn">Day vs day</span></button>
-        <button type="button" class="gran-btn" data-gran="week"><strong>周对比</strong><span class="cn">Week vs week (date range)</span></button>
-        <button type="button" class="gran-btn" data-gran="month"><strong>月对比</strong><span class="cn">Month vs month (date range)</span></button>
-        <button type="button" class="gran-btn" data-gran="custom"><strong>自定义对比</strong><span class="cn">Custom date range</span></button>
-      </div>
-    </div>
-
-    <div class="panel">
-      <h3><span class="stepnum">2</span><span>基本信息 <span class="cn">Report basics</span></span></h3>
-      <div class="grid3" id="daymode-fields">
-        <div class="field"><label>日期A（较早）<span class="cn">Date A (earlier)</span></label><input type="date" id="f-date-a"></div>
-        <div class="field"><label>日期B（较晚）<span class="cn">Date B (later)</span></label><input type="date" id="f-date-b"></div>
-        <div class="field"><label>报告名称 <span class="cn">Report name — auto-generated from dates, editable</span></label><input type="text" id="f-name-day" class="f-name-input" placeholder="选择日期后自动生成 / auto-fills once dates are picked"></div>
-      </div>
-      <div class="grid2" id="rangemode-fields" hidden>
+      <h3><span class="stepnum">1</span><span>日期与看板名称 <span class="cn">Dates & dashboard name</span></span></h3>
+      <p style="font-size:11.5px;color:var(--muted);margin:0 0 14px;">无需选择分析方式，系统按上传的文件自动判断：只上传日期A（一列）文件 = 单日分析（单仓或多仓）；A、B 两列都上传 = 对比（单仓或多仓）。日期可以不填，自动读取 CSV 里的 Pickup Date；只选开始日期即代表单日。<span style="display:block;">No mode to choose — it is detected from the files: files in column A only = single-day analysis (one or several depots); files in both A and B = comparison. Dates are optional and read from the CSV Pickup Date; picking only a start date means a single day.</span></p>
+      <p style="font-size:11.5px;color:var(--muted);margin:0 0 14px;">下方按周查看并维护 OPC 原始数据；所有日期永久保留，报表按所选日期范围自动汇总。<span style="display:block;">Maintain daily OPC raw values below. All dates are retained and reports sum the selected ranges.</span></p>
+      <div class="grid2" id="period-fields">
         <div class="field">
-          <label>周期A（较早）<span class="cn">Period A (earlier) — start → end</span></label>
+          <label>日期/周期 A（可选，自动识别）<span class="cn">Date A — optional, auto-detected</span></label>
           <div class="rangefield">
             <input type="date" id="f-date-a-start" title="Period A start">
             <input type="date" id="f-date-a-end" title="Period A end">
           </div>
         </div>
         <div class="field">
-          <label>周期B（较晚）<span class="cn">Period B (later) — start → end</span></label>
+          <label>日期/周期 B（仅对比时，自动识别）<span class="cn">Date B — comparison only, auto-detected</span></label>
           <div class="rangefield">
             <input type="date" id="f-date-b-start" title="Period B start">
             <input type="date" id="f-date-b-end" title="Period B end">
           </div>
         </div>
-        <div class="field" style="grid-column:1/-1;"><label>报告名称 <span class="cn">Report name — auto-generated from dates, editable</span></label><input type="text" id="f-name-range" class="f-name-input" placeholder="选择日期后自动生成 / auto-fills once dates are picked"></div>
       </div>
+      
+      <div class="field"><label>看板名称 <span class="cn">Dashboard name — auto-generated from dates, editable</span></label><input type="text" id="f-name-range" class="f-name-input" placeholder="选择日期后自动生成 / auto-fills once dates are picked"></div>
     </div>
 
-    <div class="panel">
-      <h3><span class="stepnum">3</span><span>各仓 Route Info 文件 <span class="cn">Per-depot route-info CSVs — 某仓某期没有运营就不用上传</span></span></h3>
+                    <div class="panel">
+      <h3><span class="stepnum">2</span><span>各仓 Route Info 文件 <span class="cn">Per-depot route-info CSVs — 某仓某期没有运营就不用上传</span></span></h3>
       <p style="font-size:11.5px;color:var(--muted);margin:0 0 14px;">某个仓在某一期没有运营（比如临时停运），对应的文件就留空不上传，报告会把它当作"该期未运营"处理，不会报错。<span style="display:block;">If a depot didn't operate in a given period (e.g. a temporary shutdown), just leave its file for that period empty — the report treats it as "not operating" instead of erroring.</span></p>
       <div class="grid3" id="route-file-grid"></div>
     </div>
 
-    <div class="panel">
-      <h3><span class="stepnum">4</span><span>Billing 结算文件 <span class="cn">Network-wide billing CSV — 可选，没有就用N/A代替成本</span></span></h3>
+<div class="panel">
+      <h3><span class="stepnum">3</span><span>Billing 结算文件 <span class="cn">Network-wide billing CSV — 可选，没有就用N/A代替成本</span></span></h3>
       <div class="grid2">
         <div class="field dropzone">
-          <label>日期A Billing</label>
+          <label>日期A / 单日 Billing（可选）</label>
           <div class="filepick">
             <input type="file" id="f-billing-a" accept=".csv" class="filepick-input">
             <div class="filepick-visual">
@@ -113,7 +101,7 @@
           </div>
         </div>
         <div class="field dropzone">
-          <label>日期B Billing</label>
+          <label>日期B Billing（对比时，可选）</label>
           <div class="filepick">
             <input type="file" id="f-billing-b" accept=".csv" class="filepick-input">
             <div class="filepick-visual">
@@ -126,54 +114,73 @@
       </div>
     </div>
 
-    <div class="panel">
-      <h3><span class="stepnum">5</span><span>OPC 修正后实际揽收量 <span class="cn">OPC-corrected actual pickup — 可选</span></span></h3>
-      <p style="font-size:11.5px;color:var(--muted);margin:0 0 14px;">留空不填也可以直接下一步——没填的会自动用路线级实际揽收合计代替，提交前会提醒你确认。<span style="display:block;">Leave a field blank and you can still proceed — it falls back to that depot's route-level actual pickup total, and you'll be asked to confirm before submitting.</span></p>
-      <div class="grid3" id="opc-grid"></div>
+<div class="panel">
+      <h3><span class="stepnum">4</span><span>每日 OPC 原始数据 <span class="cn">Daily OPC raw data · 按周查看</span></span></h3>
+      <div class="ledger-toolbar">
+        <input type="hidden" id="opc-week-date"><strong id="opc-week-label">正在载入最近一周…</strong>
+        <div class="ledger-actions"><button class="secondary small" id="opc-week-prev" type="button">← 上周</button><button class="secondary small" id="opc-week-next" type="button">下周 →</button><button class="secondary small" id="opc-add-raw" type="button">+ 添加 raw 行</button></div>
+      </div>
+      <div id="opc-ledger-message"></div>
+      <div class="tblwrap"><table class="ledger-table"><thead><tr><th>日期 Date</th><th>Manchester</th><th>Birmingham</th><th>West London</th><th>维护人 Updated by</th></tr></thead><tbody id="opc-ledger-body"></tbody></table></div>
+      <div style="display:flex;gap:10px;align-items:center;margin-top:12px;flex-wrap:wrap;"><button class="primary small" id="opc-save-week" type="button">保存本周 Save week</button><span class="na">数字为 OPC；不运营填“不运营”，清空已有值填“清除”。相同日期/仓已有数据时会提示覆盖。<span class="cn">Enter numbers, “不运营”, or “清除”. Existing date/depot entries require overwrite confirmation.</span></span></div>
     </div>
 
+<div class="panel">
+      <h3><span class="stepnum">5</span><span>AB Scan 历史差异 <span class="cn">AB Scan history · 差异发生时再记录</span></span></h3>
+      <div class="ledger-toolbar"><div class="field"><label>日期 <span class="cn">Select date</span></label><input type="date" id="ab-history-date"></div><button class="secondary small" id="ab-history-load" type="button">查看历史 Load history</button></div>
+      <div class="tblwrap"><table class="ledger-table"><thead><tr><th>差异日期</th><th>Route ID</th><th>修正后揽收量</th><th>原因</th><th>维护人 Updated by</th><th></th></tr></thead><tbody id="ab-history-body"></tbody></table></div>
+      <div id="ab-history-message"></div>
+      <button class="secondary small" id="ab-history-add" type="button" style="margin-top:10px;">+ 添加差异 Add difference</button>
+      <button class="primary small" id="ab-history-save" type="button" style="margin-top:10px;">保存 AB Scan 记录 Save</button>
+    </div>
+
+
     <div class="panel">
-      <h3><span class="stepnum">6</span><span>AB Scan 差异修正 <span class="cn">AB-scan overrides — 可选，逐条添加</span></span></h3>
+      <h3><span class="stepnum">5</span><span>AB Scan 报告修正 <span class="cn">AB-scan corrections — saved and reused for the same date range</span></span></h3>
+      <p style="font-size:11.5px;color:var(--muted);margin:0 0 12px;">修正会按路线、A/B期和具体日期范围保存；再次生成相同日期范围的看板时自动带入。<span style="display:block;">Corrections are saved by route, A/B period, and exact date range, then reused for future dashboards with the same range.</span></p>
       <div id="ab-rows"></div>
       <button class="secondary small" id="btn-add-ab" type="button">+ 添加一条 Add row</button>
     </div>
 
-    <button class="primary" id="btn-submit">生成报告 Generate report</button>
+    <button class="primary" id="btn-submit">生成看板 Generate dashboard</button>
     <span id="submit-status" style="margin-left:12px;font-size:12.5px;color:var(--muted);"></span>
   </section>
 
   <!-- ==================== REPORT VIEW ==================== -->
   <section id="view-report" class="view">
-    <div id="report-empty" class="panel">还没有报告 — 请先上传数据，或从"历史"里选一份。<span class="cn" style="display:block;margin-top:4px;">No report loaded yet — upload data, or pick one from History.</span></div>
+    <div id="report-empty" class="panel">还没有看板 — 请先上传数据，或从历史看板中选一份。<span class="cn" style="display:block;margin-top:4px;">No dashboard yet — upload data or open one from Saved dashboards.</span></div>
     <div id="report-content" style="display:none;"></div>
   </section>
 
   <!-- ==================== HISTORY VIEW ==================== -->
   <section id="view-history" class="view">
     <div class="panel">
-      <h3>历史报告 <span class="cn">Saved weekly reports</span></h3>
+      <h3>历史看板 <span class="cn">Saved dashboards</span></h3>
       <div id="history-list"></div>
     </div>
   </section>
 
   <!-- ==================== ADMIN VIEW (visible to the admin account only) ==================== -->
-  <section id="view-admin" class="view">
+  <section id="view-admin" class="view" hidden>
     <div class="panel">
       <h3>创建账号 <span class="cn">Create account</span></h3>
       <p style="font-size:11.5px;color:var(--muted);margin:0 0 14px;">账号只能由管理员创建；新账号可以创建、查看和删除自己创建的报告。<span style="display:block;">Accounts can only be created by the admin; a new account can create, view, and delete its own reports.</span></p>
       <div class="grid3">
         <div class="field"><label>用户名 <span class="cn">Username</span></label><input type="text" id="f-admin-newuser"></div>
-        <div class="field"><label>密码（可选）<span class="cn">Password — optional</span></label><input type="text" id="f-admin-newpass"></div>
+        <div class="field"><label>密码 <span class="cn">Password</span></label><input type="password" id="f-admin-newpass" autocomplete="new-password" required></div>
         <div class="field" style="display:flex;align-items:flex-end;margin-bottom:15px;"><button class="primary" id="btn-admin-create" type="button" style="width:100%;">创建 Create</button></div>
       </div>
       <div id="adminCreateMsg"></div>
     </div>
     <div class="panel">
       <h3>账号 <span class="cn">Accounts</span></h3>
+      <p style="font-size:11.5px;color:var(--muted);margin:0 0 14px;">管理员可为每个账号单独开通“导出给 AI 分析”；新账号默认关闭。<span style="display:block;">Admins can enable AI export for individual accounts. New accounts are disabled by default.</span></p>
       <div class="tblwrap">
         <table><thead><tr>
           <th style="text-align:left;">Username</th>
           <th style="text-align:left;">Admin<span class="cn">管理员</span></th>
+          <th style="text-align:left;">AI 导出<span class="cn">AI export</span></th>
+          <th style="text-align:left;">密码管理<span class="cn">Password</span></th>
           <th style="text-align:left;">创建时间<span class="cn">Created</span></th>
         </tr></thead><tbody id="adminUserTable"></tbody></table>
       </div>
@@ -182,6 +189,7 @@
 
 </div>
 
-<script src="app.js"></script>
+<script src="app.js?v=20260927-auto-mode"></script>
+<script type="module" src="https://static.cloudflareinsights.com/beacon.min.js/v31edd6df95cf4e85bb4c19e7a9bdbcba1788362987495" integrity="sha512-iIg7k2xntmwu6/uSb5tpc/hySgZc4eoL31yB29W6tJFo2akwjPWcEqnCEdJvGexCL0KEQwVYv5BlowfhVz26hg==" data-cf-beacon='{"version":"2024.11.0","token":"84112fa16b114bd693596ebb67e3423d","r":1,"spa":2}' crossorigin="anonymous"></script>
 </body>
 </html>

@@ -29,12 +29,16 @@ const gbp = (n, dp = 3) => (n === null || n === undefined || Number.isNaN(n)) ? 
 // period has routes14=0 / cpp14=null, which would otherwise divide into
 // Infinity or NaN instead of a clean N/A.
 const pctChange = (nv, ov) => (nv == null || ov == null || !ov || Number.isNaN(nv) || Number.isNaN(ov)) ? null : (nv / ov - 1) * 100;
+// Cost movements use the business convention: higher cost is adverse/red,
+// lower cost is favourable/green.
+const costTrendClass = change => change == null || change === 0 ? '' : change > 0 ? 'neg' : 'pos';
 // qualitative palette for dynamic categories (vehicle classes, cancel reasons)
 const QUAL_COLORS = ['#5c4b8a', '#b8862c', '#2f5f92', '#2f7a4f', '#c1592e', '#a33e6b', '#8a8f78', '#7a5230'];
 
 function showMsg(text, kind = "info") {
   const box = document.getElementById("msgbox");
   box.innerHTML = `<div class="msg ${kind}">${text}</div>`;
+  if (kind === "error") box.scrollIntoView({ behavior: "smooth", block: "start" });
   if (kind !== "error") setTimeout(() => { box.innerHTML = ""; }, 6000);
 }
 
@@ -48,24 +52,40 @@ const AUTH_TOKEN_KEY = "crna_token";
 const AUTH_USER_KEY = "crna_username";
 let currentUser = null;
 let currentUserIsAdmin = false;
+let currentUserAiAllowed = false;
 
 function authHeaders() {
   const token = localStorage.getItem(AUTH_TOKEN_KEY);
   return token ? { Authorization: "Bearer " + token } : {};
 }
 function showLoginGate() {
+  document.body.classList.add("logged-out");
   document.getElementById("loginGate").style.display = "flex";
   document.getElementById("userbar").hidden = true;
+  currentUser = null;
+  currentUserIsAdmin = false;
+  currentUserAiAllowed = false;
+  document.getElementById("navAdminBtn").hidden = true;
+  document.getElementById("view-admin").hidden = true;
+  document.getElementById("report-content").innerHTML = "";
+  document.getElementById("report-content").style.display = "none";
+  document.getElementById("report-empty").style.display = "block";
+  document.getElementById("history-list").innerHTML = "";
+  document.querySelectorAll("nav.tabs button").forEach(b => b.classList.toggle("active", b.dataset.view === "upload"));
+  document.querySelectorAll(".view").forEach(v => v.classList.toggle("active", v.id === "view-upload"));
 }
 function hideLoginGate() {
+  document.body.classList.remove("logged-out");
   document.getElementById("loginGate").style.display = "none";
   document.getElementById("userbar").hidden = false;
   document.getElementById("userbarName").textContent = currentUser || "";
+  if (typeof loadOpcWeek === "function") loadOpcWeek();
 }
 // Shows/hides UI that depends on the logged-in account's role — the Admin
 // nav tab (admin only) — called after every login and on checkAuth().
 function applyUserPermissionsUI() {
   document.getElementById("navAdminBtn").hidden = !currentUserIsAdmin;
+  document.getElementById("view-admin").hidden = !currentUserIsAdmin;
 }
 async function checkAuth() {
   const token = localStorage.getItem(AUTH_TOKEN_KEY);
@@ -76,11 +96,16 @@ async function checkAuth() {
     const body = await resp.json();
     currentUser = body.username;
     currentUserIsAdmin = !!body.is_admin;
+    currentUserAiAllowed = !!body.ai_allowed || currentUserIsAdmin;
     applyUserPermissionsUI();
     hideLoginGate();
   } catch (e) {
     localStorage.removeItem(AUTH_TOKEN_KEY);
     localStorage.removeItem(AUTH_USER_KEY);
+    currentUser = null;
+    currentUserIsAdmin = false;
+    currentUserAiAllowed = false;
+    applyUserPermissionsUI();
     showLoginGate();
   }
 }
@@ -101,6 +126,7 @@ document.getElementById("btn-login").addEventListener("click", async () => {
     localStorage.setItem(AUTH_USER_KEY, body.username);
     currentUser = body.username;
     currentUserIsAdmin = !!body.is_admin;
+    currentUserAiAllowed = !!body.ai_allowed || currentUserIsAdmin;
     applyUserPermissionsUI();
     hideLoginGate();
   } catch (e) {
@@ -120,7 +146,11 @@ function showConfirm(titleHtml, bodyHtml, okLabel = "继续 Continue") {
     const cancelBtn = document.getElementById("confirmCancel");
     okBtn.textContent = okLabel;
     modal.hidden = false;
-    const cleanup = result => { modal.hidden = true; okBtn.onclick = null; cancelBtn.onclick = null; resolve(result); };
+    const onBackdrop = e => { if (e.target === modal) cleanup(false); };
+    const cleanup = result => { modal.hidden = true; okBtn.onclick = null; cancelBtn.onclick = null; modal.removeEventListener("click", onBackdrop); document.removeEventListener("keydown", onKeydown); resolve(result); };
+    const onKeydown = e => { if (e.key === "Escape") cleanup(false); };
+    modal.addEventListener("click", onBackdrop);
+    document.addEventListener("keydown", onKeydown);
     okBtn.onclick = () => cleanup(true);
     cancelBtn.onclick = () => cleanup(false);
   });
@@ -130,6 +160,9 @@ document.getElementById("btn-logout").addEventListener("click", async () => {
   localStorage.removeItem(AUTH_TOKEN_KEY);
   localStorage.removeItem(AUTH_USER_KEY);
   currentUser = null;
+  currentUserIsAdmin = false;
+  currentUserAiAllowed = false;
+  applyUserPermissionsUI();
   showLoginGate();
 });
 checkAuth();
@@ -139,6 +172,7 @@ document.querySelectorAll("nav.tabs button").forEach(btn => {
   btn.addEventListener("click", () => switchView(btn.dataset.view));
 });
 function switchView(view) {
+  if (!currentUser || (view === "admin" && !currentUserIsAdmin)) return;
   document.querySelectorAll("nav.tabs button").forEach(b => b.classList.toggle("active", b.dataset.view === view));
   document.querySelectorAll(".view").forEach(v => v.classList.toggle("active", v.id === "view-" + view));
   if (view === "history") loadHistory();
@@ -151,11 +185,11 @@ function switchView(view) {
    side (require_admin on every /api/admin/* route), this is just UI. */
 async function loadAdminUsers() {
   const tbody = document.getElementById('adminUserTable');
-  tbody.innerHTML = '<tr><td colspan="3" class="na" style="text-align:center;">加载中… Loading…</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="5" class="na" style="text-align:center;">加载中… Loading…</td></tr>';
   try {
     const resp = await fetch(API_BASE + 'admin/users', { headers: authHeaders() });
     if (resp.status === 401) { showLoginGate(); return; }
-    if (resp.status === 403) { tbody.innerHTML = '<tr><td colspan="3" class="na" style="text-align:center;">仅管理员可见 / Admins only</td></tr>'; return; }
+    if (resp.status === 403) { tbody.innerHTML = '<tr><td colspan="5" class="na" style="text-align:center;">仅管理员可见 / Admins only</td></tr>'; return; }
     const users = await resp.json();
     tbody.innerHTML = '';
     users.forEach(u => {
@@ -164,13 +198,42 @@ async function loadAdminUsers() {
       row.innerHTML = `
         <td style="text-align:left;font-weight:600;">${u.username}</td>
         <td style="text-align:left;">${isAdminUser ? '<span class="pos">✓ Admin</span>' : '<span class="na">—</span>'}</td>
+        <td style="text-align:left;">${isAdminUser ? '<span class="pos">始终开放 Always on</span>' : `<label style="display:flex;align-items:center;gap:7px;"><input type="checkbox" class="ai-access-toggle" data-username="${u.username}" ${u.ai_allowed ? 'checked' : ''} aria-label="Enable AI export for ${u.username}"><span>${u.ai_allowed ? '已开放 Enabled' : '关闭 Off'}</span></label>`}</td>
+        <td style="text-align:left;"><div style="display:flex;gap:5px;"><input type="password" class="admin-new-password" autocomplete="new-password" aria-label="New password for ${u.username}" style="min-width:100px;width:130px;padding:6px;" placeholder="新密码"><button type="button" class="secondary small admin-set-password">更新</button></div></td>
         <td style="text-align:left;font-size:11px;color:var(--muted);">${u.created_at || ''}</td>
       `;
       tbody.appendChild(row);
+      const toggle = row.querySelector('.ai-access-toggle');
+      if (toggle) toggle.addEventListener('change', async () => {
+        toggle.disabled = true;
+        const fd = new FormData(); fd.append('allowed', String(toggle.checked));
+        try {
+          const update = await fetch(`${API_BASE}admin/users/${encodeURIComponent(u.username)}/ai-access`, { method: 'POST', headers: authHeaders(), body: fd });
+          const result = await update.json();
+          if (!update.ok) throw new Error(result.detail || 'Update failed');
+          loadAdminUsers();
+        } catch (e) {
+          toggle.checked = !toggle.checked;
+          toggle.disabled = false;
+          showMsg('权限更新失败 / Failed to update access: ' + e.message, 'error');
+        }
+      });
+      const passwordInput = row.querySelector('.admin-new-password');
+      row.querySelector('.admin-set-password').addEventListener('click', async () => {
+        if (!passwordInput.value) { showMsg('请先输入新密码 / Enter a new password first.', 'error'); return; }
+        const fd = new FormData(); fd.append('password', passwordInput.value);
+        try {
+          const update = await fetch(`${API_BASE}admin/users/${encodeURIComponent(u.username)}/password`, { method: 'POST', headers: authHeaders(), body: fd });
+          const result = await update.json();
+          if (!update.ok) throw new Error(result.detail || 'Update failed');
+          passwordInput.value = '';
+          showMsg(`账号 ${u.username} 的密码已更新 / Password updated for ${u.username}.`, 'ok');
+        } catch (e) { showMsg('密码更新失败 / Failed to update password: ' + e.message, 'error'); }
+      });
     });
-    if (!users.length) tbody.innerHTML = '<tr><td colspan="3" class="na" style="text-align:center;">没有账号 / No accounts</td></tr>';
+    if (!users.length) tbody.innerHTML = '<tr><td colspan="5" class="na" style="text-align:center;">没有账号 / No accounts</td></tr>';
   } catch (e) {
-    tbody.innerHTML = `<tr><td colspan="3" class="na" style="text-align:center;">加载失败 / Failed to load: ${e.message}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="5" class="na" style="text-align:center;">加载失败 / Failed to load: ${e.message}</td></tr>`;
   }
 }
 document.getElementById('btn-admin-create').addEventListener('click', async () => {
@@ -179,6 +242,7 @@ document.getElementById('btn-admin-create').addEventListener('click', async () =
   const username = uEl.value.trim(), password = pEl.value;
   msg.innerHTML = '';
   if (!username) { msg.innerHTML = '<div class="msg error">请输入用户名 / Username is required</div>'; return; }
+  if (!password) { msg.innerHTML = '<div class="msg error">请输入密码 / Password is required</div>'; return; }
   try {
     const fd = new FormData(); fd.append('username', username); fd.append('password', password);
     const resp = await fetch(API_BASE + 'admin/users', { method: 'POST', headers: authHeaders(), body: fd });
@@ -191,6 +255,86 @@ document.getElementById('btn-admin-create').addEventListener('click', async () =
     msg.innerHTML = `<div class="msg error">创建失败 / Failed: ${e.message}</div>`;
   }
 });
+
+/* ---------------- OPC and AB Scan shared daily ledgers ---------------- */
+const opcWeekDate = document.getElementById('opc-week-date');
+const opcLedgerBody = document.getElementById('opc-ledger-body');
+const opcDepotNames = ['Manchester', 'Birmingham', 'London'];
+const opcDepotLabels = ['Manchester', 'Birmingham', 'West London'];
+function isoDate(d) { return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
+function mondayOf(value) { const d = new Date(`${value}T00:00:00`); d.setDate(d.getDate() - ((d.getDay()+6)%7)); return d; }
+function escapeAttr(value) { return String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function opcRow(day, records = {}) {
+  const entries = opcDepotNames.map(depot => records[depot]);
+  const original = Object.fromEntries(opcDepotNames.map((depot,i)=>[depot,entries[i] ? (entries[i].status === 'not_operating' ? '不运营' : entries[i].value) : '']));
+  return `<tr data-date="${day}" data-original="${escapeAttr(JSON.stringify(original))}"><td><input class="ledger-date" type="date" value="${day}"></td>${entries.map((entry, index) => `<td><input class="opc-value" data-depot="${opcDepotNames[index]}" type="text" inputmode="decimal" placeholder="—" value="${entry ? (entry.status === 'not_operating' ? '不运营' : entry.value) : ''}"></td>`).join('')}<td class="ledger-user">${escapeAttr([...new Set(entries.filter(Boolean).map(x=>x.updated_by))].join(', ') || '—')}</td></tr>`;
+}
+async function loadOpcWeek() {
+  if (!opcWeekDate.value) {
+    try {
+      const latestResp=await fetch(API_BASE+'opc-daily/latest',{headers:authHeaders()});
+      if(!latestResp.ok)return;
+      const latest=await latestResp.json();
+      opcWeekDate.value=latest.date||isoDate(new Date());
+    } catch(e) { return; }
+  }
+  const monday = mondayOf(opcWeekDate.value), sunday = new Date(monday); sunday.setDate(sunday.getDate()+6);
+  const start = isoDate(monday), end = isoDate(sunday);
+  document.getElementById('opc-week-label').textContent=`${start} — ${end}`;
+  try {
+    const resp = await fetch(`${API_BASE}opc-daily?${new URLSearchParams({start,end})}`, {headers:authHeaders()});
+    if (!resp.ok) throw new Error('读取失败');
+    const {records} = await resp.json(), byDate = {};
+    records.forEach(r => { (byDate[r.date] ||= {})[r.depot] = r; });
+    opcLedgerBody.innerHTML = Array.from({length:7}, (_,i) => { const d=new Date(`${start}T00:00:00`); d.setDate(d.getDate()+i); const day=isoDate(d); return opcRow(day,byDate[day]||{}); }).join('');
+    document.getElementById('opc-ledger-message').innerHTML = `<div class="na">${start} — ${end} · 数据维护人显示最近一次编辑者</div>`;
+  } catch(e) { document.getElementById('opc-ledger-message').innerHTML = `<div class="msg error">OPC 历史读取失败：${e.message}</div>`; }
+}
+opcWeekDate.addEventListener('change', loadOpcWeek);
+document.getElementById('opc-week-prev').addEventListener('click',()=>{const d=mondayOf(opcWeekDate.value);d.setDate(d.getDate()-7);opcWeekDate.value=isoDate(d);loadOpcWeek();});
+document.getElementById('opc-week-next').addEventListener('click',()=>{const d=mondayOf(opcWeekDate.value);d.setDate(d.getDate()+7);opcWeekDate.value=isoDate(d);loadOpcWeek();});
+document.getElementById('opc-add-raw').addEventListener('click',()=>{
+  const day=prompt('输入 raw 数据日期 (YYYY-MM-DD)'); if(!day || !/^\d{4}-\d{2}-\d{2}$/.test(day)) return;
+  opcWeekDate.value=day; loadOpcWeek().then(()=>{const row=opcLedgerBody.querySelector(`tr[data-date="${day}"]`);row?.scrollIntoView({behavior:'smooth',block:'center'});row?.querySelector('.opc-value')?.focus();});
+});
+async function saveOpcWeek(overwrite=false) {
+  const rows=[];
+  opcLedgerBody.querySelectorAll('tr').forEach(tr=>tr.querySelectorAll('.opc-value').forEach(input=>{
+    const value=input.value.trim(), original=JSON.parse(tr.dataset.original||'{}')[input.dataset.depot] ?? '';
+    if(value && value !== String(original)) rows.push({date:tr.querySelector('.ledger-date').value,depot:input.dataset.depot,value});
+  }));
+  if(!rows.length) { document.getElementById('opc-ledger-message').innerHTML='<div class="na">本周没有修改 / No changes this week.</div>'; return; }
+  const resp=await fetch(`${API_BASE}opc-daily?overwrite=${overwrite}`,{method:'POST',headers:{...authHeaders(),'Content-Type':'application/json'},body:JSON.stringify({records:rows})});
+  const body=await resp.json();
+  if(!resp.ok) throw new Error(body.detail||'保存失败');
+  if(body.conflict){
+    const labels=body.existing.map(r=>`${r.date} / ${r.depot}（维护人 ${r.updated_by||'未知'}）`).join('\n');
+    if(await showConfirm('覆盖已有 OPC 数据',`以下日期/仓已有记录：<br><br>${escapeAttr(labels).replace(/\n/g,'<br>')}<br><br>是否用本次数据覆盖？`,'确认覆盖')) return saveOpcWeek(true);
+    return;
+  }
+  document.getElementById('opc-ledger-message').innerHTML=`<div class="msg ok">已保存 ${body.saved} 条 OPC 记录</div>`; await loadOpcWeek();
+}
+document.getElementById('opc-save-week').addEventListener('click',async()=>{try{await saveOpcWeek();}catch(e){document.getElementById('opc-ledger-message').innerHTML=`<div class="msg error">保存失败：${e.message}</div>`;}});
+
+const abHistoryDate=document.getElementById('ab-history-date'), abHistoryBody=document.getElementById('ab-history-body');
+function abHistoryRow(item={}) { const original=JSON.stringify({date_key:item.date_key||'',route_id:item.route_id||'',override_value:item.override_value??'',reason:item.reason||''}); return `<tr data-original="${escapeAttr(original)}" ${item.updated_by?'data-saved="true"':''}><td><input class="ab-h-date" type="date" value="${escapeAttr(item.date_key||abHistoryDate.value||'')}"></td><td><input class="ab-h-route" type="text" value="${escapeAttr(item.route_id||'')}" placeholder="Route ID"></td><td><input class="ab-h-value" type="number" min="0" step="any" value="${escapeAttr(item.override_value??'')}"></td><td><input class="ab-h-reason" type="text" value="${escapeAttr(item.reason||'')}"></td><td class="ledger-user">${escapeAttr(item.updated_by||'新记录')}</td><td><button class="secondary small ab-h-remove" type="button">${item.updated_by?'删除 Delete':'移除 Remove'}</button></td></tr>`; }
+async function loadAbHistory(){
+  const day=abHistoryDate.value; if(!day)return;
+  try{const resp=await fetch(`${API_BASE}ab-scan-history?${new URLSearchParams({start:day,end:day})}`,{headers:authHeaders()});if(!resp.ok)throw new Error('读取失败');const {records}=await resp.json();abHistoryBody.innerHTML=records.map(abHistoryRow).join('');document.getElementById('ab-history-message').innerHTML=`<div class="na">${day} · ${records.length} 条历史差异</div>`;}
+  catch(e){document.getElementById('ab-history-message').innerHTML=`<div class="msg error">读取失败：${e.message}</div>`;}
+}
+document.getElementById('ab-history-load').addEventListener('click',loadAbHistory);
+abHistoryDate.addEventListener('change',loadAbHistory);
+document.getElementById('ab-history-add').addEventListener('click',()=>abHistoryBody.insertAdjacentHTML('beforeend',abHistoryRow({date_key:abHistoryDate.value})));
+abHistoryBody.addEventListener('click',async e=>{if(!e.target.classList.contains('ab-h-remove'))return;const tr=e.target.closest('tr');if(!tr.dataset.saved){tr.remove();return;}const day=tr.querySelector('.ab-h-date').value,route=tr.querySelector('.ab-h-route').value.trim();if(!await showConfirm('删除 AB Scan 记录',`删除 ${escapeAttr(day)} / ${escapeAttr(route)} 的历史记录？`,'删除'))return;try{const resp=await fetch(`${API_BASE}ab-scan-history?${new URLSearchParams({date_key:day,route_id:route})}`,{method:'DELETE',headers:authHeaders()});const body=await resp.json();if(!resp.ok)throw new Error(body.detail||'删除失败');tr.remove();}catch(err){document.getElementById('ab-history-message').innerHTML=`<div class="msg error">删除失败：${err.message}</div>`;}});
+async function saveAbHistory(overwrite=false){
+  const records=Array.from(abHistoryBody.querySelectorAll('tr')).map(tr=>{const r={date_key:tr.querySelector('.ab-h-date').value,route_id:tr.querySelector('.ab-h-route').value.trim(),override_value:tr.querySelector('.ab-h-value').value,reason:tr.querySelector('.ab-h-reason').value.trim()};const o=JSON.parse(tr.dataset.original||'{}');return {...r,changed:JSON.stringify(r)!==JSON.stringify({date_key:o.date_key||'',route_id:o.route_id||'',override_value:String(o.override_value??''),reason:o.reason||''})};}).filter(r=>r.date_key&&r.route_id&&r.override_value!==''&&r.changed);
+  if(!records.length){document.getElementById('ab-history-message').innerHTML='<div class="na">没有新增或修改的数据 / No new or changed records.</div>';return;}
+  const resp=await fetch(`${API_BASE}ab-scan-history?overwrite=${overwrite}`,{method:'POST',headers:{...authHeaders(),'Content-Type':'application/json'},body:JSON.stringify({records})});const body=await resp.json();if(!resp.ok)throw new Error(body.detail||'保存失败');
+  if(body.conflict){const labels=body.existing.map(r=>`${r.date_key} / ${r.route_id}（维护人 ${r.updated_by||'未知'}）`).join('\n');if(await showConfirm('覆盖已有 AB Scan 数据',`以下日期/路线已有记录：<br><br>${escapeAttr(labels).replace(/\n/g,'<br>')}<br><br>是否覆盖？`,'确认覆盖'))return saveAbHistory(true);return;}
+  document.getElementById('ab-history-message').innerHTML=`<div class="msg ok">已保存 ${body.saved} 条，维护人：${escapeAttr(currentUser)}</div>`;await loadAbHistory();
+}
+document.getElementById('ab-history-save').addEventListener('click',async()=>{try{await saveAbHistory();}catch(e){document.getElementById('ab-history-message').innerHTML=`<div class="msg error">保存失败：${e.message}</div>`;}});
 
 /* ---------------- drag & drop for file inputs ----------------
    The clickable/droppable surface is the whole .filepick-visual card:
@@ -237,41 +381,26 @@ document.querySelectorAll("#view-upload input[type=file]").forEach(enableDropzon
 
 /* ---------------- upload form: build dynamic inputs ---------------- */
 const routeGrid = document.getElementById("route-file-grid");
-const opcGrid = document.getElementById("opc-grid");
 DEPOTS.forEach(depot => {
   const key = DEPOT_KEY[depot];
   const cls = DEPOT_CLASS[depot];
   const fg = document.createElement("div");
   fg.className = "filegroup";
+  fg.dataset.depot = depot;
   fg.innerHTML = `
     <span class="depot-tag ${cls}">${BI[depot].en} ${BI[depot].cn}</span>
-    <div class="field dropzone"><label>日期A文件 <span class="cn">Date A file</span></label>${filepickHtml(`f-route-${key}-a`)}</div>
-    <div class="field dropzone" style="margin-bottom:0;"><label>日期B文件 <span class="cn">Date B file</span></label>${filepickHtml(`f-route-${key}-b`)}</div>
+    <div class="field dropzone"><label>日期A / 单日文件 <span class="cn">Date A or single-day file</span></label>${filepickHtml(`f-route-${key}-a`).replace('filepick-input"','filepick-input route-file-a"')}</div>
+    <div class="field dropzone route-file-b" style="margin-bottom:0;"><label>日期B文件（对比时上传）<span class="cn">Date B file — only for comparison</span></label>${filepickHtml(`f-route-${key}-b`).replace('filepick-input"','filepick-input route-file-b-input"')}</div>
   `;
   routeGrid.appendChild(fg);
   enableDropzone(fg.querySelector(`#f-route-${key}-a`));
   enableDropzone(fg.querySelector(`#f-route-${key}-b`));
 
-  const og = document.createElement("div");
-  og.className = "filegroup";
-  og.innerHTML = `
-    <span class="depot-tag ${cls}">${BI[depot].en} ${BI[depot].cn}</span>
-    <div class="field"><label>日期A OPC <span class="cn">optional</span></label><input type="number" id="f-opc-${key}-a" placeholder="留空=自动回退 auto-fallback"></div>
-    <div class="field" style="margin-bottom:0;"><label>日期B OPC <span class="cn">optional</span></label><input type="number" id="f-opc-${key}-b" placeholder="留空=自动回退 auto-fallback"></div>
-  `;
-  opcGrid.appendChild(og);
 });
 
-/* ---------------- comparison granularity (day / week / month) ---------------- */
+/* ---------------- comparison granularity inferred from entered dates ---------------- */
 const GRAN_LABEL = { day: { en: "Day vs day", cn: "日对比" }, week: { en: "Week vs week", cn: "周对比" }, month: { en: "Month vs month", cn: "月对比" }, custom: { en: "Custom date range", cn: "自定义对比" } };
-let granState = "day";
-function setGranularity(g) {
-  granState = g;
-  document.querySelectorAll(".gran-btn").forEach(b => b.classList.toggle("active", b.dataset.gran === g));
-  document.getElementById("daymode-fields").hidden = g !== "day";
-  document.getElementById("rangemode-fields").hidden = g === "day";
-  regenerateName();
-}
+let granState = "custom";
 
 /* ---------------- date pickers -> auto report name ---------------- */
 const MONTH_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -296,38 +425,62 @@ function rangeLabel(startVal, endVal) {
   return s.m === e.m ? `${s.d}-${e.d} ${MONTH_ABBR[s.m - 1]}` : `${s.d} ${MONTH_ABBR[s.m - 1]} - ${e.d} ${MONTH_ABBR[e.m - 1]}`;
 }
 
-const dayNameInput = document.getElementById("f-name-day");
 const rangeNameInput = document.getElementById("f-name-range");
-const dateAInput = document.getElementById("f-date-a");
-const dateBInput = document.getElementById("f-date-b");
 const dateAStartInput = document.getElementById("f-date-a-start");
 const dateAEndInput = document.getElementById("f-date-a-end");
 const dateBStartInput = document.getElementById("f-date-b-start");
 const dateBEndInput = document.getElementById("f-date-b-end");
-let nameManuallyEdited = { day: false, range: false };
-dayNameInput.addEventListener("input", () => { nameManuallyEdited.day = true; });
-rangeNameInput.addEventListener("input", () => { nameManuallyEdited.range = true; });
+let nameManuallyEdited = false;
+rangeNameInput.addEventListener("input", () => { nameManuallyEdited = true; });
+function spanDays(start, end) {
+  const s = new Date(`${start}T00:00:00Z`), e = new Date(`${end}T00:00:00Z`);
+  return Math.round((e - s) / 86400000) + 1;
+}
+function fullMonth(start, end) {
+  const s = parseDateVal(start), e = parseDateVal(end);
+  if (!s || !e || s.d !== 1 || s.y !== e.y || s.m !== e.m) return false;
+  return e.d === new Date(Date.UTC(e.y, e.m, 0)).getUTCDate();
+}
+function inferGranularity(as, ae, bs, be) {
+  if (as === ae && bs === be) return "day";
+  if (fullMonth(as, ae) && fullMonth(bs, be)) return "month";
+  if (spanDays(as, ae) === 7 && spanDays(bs, be) === 7) return "week";
+  return "custom";
+}
+function periodShortLabel(start, end) { return start === end ? shortDots(start) : rangeShortDots(start, end); }
+function periodLabel(start, end) { return start === end ? dayMonthLabel(start) : rangeLabel(start, end); }
 function regenerateName() {
-  if (granState === "day") {
-    if (nameManuallyEdited.day) return;
-    const a = dateAInput.value, b = dateBInput.value;
-    if (a && b) dayNameInput.value = `${shortDots(a)}对比${shortDots(b)}`;
-  } else {
-    if (nameManuallyEdited.range) return;
-    const as = dateAStartInput.value, ae = dateAEndInput.value, bs = dateBStartInput.value, be = dateBEndInput.value;
-    if (as && ae && bs && be) rangeNameInput.value = `${rangeShortDots(as, ae)}对比${rangeShortDots(bs, be)}`;
+  const as = dateAStartInput.value, ae = dateAEndInput.value, bs = dateBStartInput.value, be = dateBEndInput.value;
+  if (as && ae && bs && be) {
+    granState = inferGranularity(as, ae, bs, be);
+    if (!nameManuallyEdited) rangeNameInput.value = `${periodShortLabel(as, ae)}对比${periodShortLabel(bs, be)}`;
+  } else if (as && ae && !bs && !be && !nameManuallyEdited) {
+    rangeNameInput.value = `${periodShortLabel(as, ae)} ${as === ae ? '单日' : '单期'}分析`;
   }
 }
-[dateAInput, dateBInput, dateAStartInput, dateAEndInput, dateBStartInput, dateBEndInput].forEach(el => el.addEventListener("change", regenerateName));
+function syncPeriod(startInput, endInput, changed) {
+  if (changed === startInput && startInput.value && !endInput.value) endInput.value = startInput.value;
+  if (changed === endInput && endInput.value && !startInput.value) startInput.value = endInput.value;
+  regenerateName();
+}
+[[dateAStartInput, dateAEndInput], [dateBStartInput, dateBEndInput]].forEach(([start, end]) => {
+  start.addEventListener("change", () => syncPeriod(start, end, start));
+  end.addEventListener("change", () => syncPeriod(start, end, end));
+});
 
-document.querySelectorAll(".gran-btn").forEach(b => b.addEventListener("click", () => setGranularity(b.dataset.gran)));
-setGranularity("day");
 
 /* ---------------- AB-scan override rows ---------------- */
 const abRows = document.getElementById("ab-rows");
-function addAbRow(vals = {}) {
+function addAbRow(vals = {}, saved = null) {
   const row = document.createElement("div");
   row.className = "ab-row";
+  if (saved) {
+    row.dataset.saved = "true";
+    row.dataset.periodStart = saved.period_start;
+    row.dataset.periodEnd = saved.period_end;
+    row.dataset.dateKey = vals.date_key;
+    row.dataset.routeId = vals.route_id;
+  }
   row.innerHTML = `
     <div><label>Route ID</label><input type="text" class="ab-route" value="${vals.route_id || ''}" placeholder="555344334871"></div>
     <div><label>日期</label>
@@ -336,14 +489,47 @@ function addAbRow(vals = {}) {
         <option value="b" ${vals.date_key !== 'a' ? 'selected' : ''}>B</option>
       </select>
     </div>
-    <div><label>修正后揽收量 <span class="cn">Override value</span></label><input type="number" class="ab-value" value="${vals.override_value || ''}" placeholder="1660"></div>
+    <div><label>修正后揽收量 <span class="cn">Override value</span></label><input type="number" class="ab-value" value="${vals.override_value ?? ''}" placeholder="1660"></div>
     <div><label>原因 <span class="cn">Reason</span></label><input type="text" class="ab-reason" value="${vals.reason || ''}" placeholder="44T full trailer..."></div>
-    <button type="button" class="secondary small ab-remove">删除 Remove</button>
+    <button type="button" class="secondary small ab-remove">${saved ? '删除已保存 Delete saved' : '删除 Remove'}</button>
   `;
-  row.querySelector(".ab-remove").addEventListener("click", () => row.remove());
+  row.querySelector(".ab-remove").addEventListener("click", async () => {
+    if (!row.dataset.saved) { row.remove(); return; }
+    const query = new URLSearchParams({ start: row.dataset.periodStart, end: row.dataset.periodEnd,
+      date_key: row.dataset.dateKey, route_id: row.dataset.routeId });
+    try {
+      const resp = await fetch(`${API_BASE}ab-scan-corrections?${query}`, { method: 'DELETE', headers: authHeaders() });
+      const body = await resp.json();
+      if (!resp.ok) throw new Error(body.detail || 'Delete failed');
+      row.remove();
+    } catch (e) { showMsg('删除已保存修正失败 / Failed to delete saved correction: ' + e.message, 'error'); }
+  });
   abRows.appendChild(row);
 }
 document.getElementById("btn-add-ab").addEventListener("click", () => addAbRow());
+
+async function loadSavedAbCorrections() {
+  const requestId = ++savedAbCorrectionRequest;
+  const as = dateAStartInput.value, ae = dateAEndInput.value, bs = dateBStartInput.value, be = dateBEndInput.value;
+  if (!(as && ae && bs && be && as <= ae && bs <= be) || !currentUser) {
+    abRows.querySelectorAll('.ab-row[data-saved="true"]').forEach(row => row.remove());
+    return;
+  }
+  const query = new URLSearchParams({ start_a: as, end_a: ae, start_b: bs, end_b: be });
+  try {
+    const resp = await fetch(`${API_BASE}ab-scan-corrections?${query}`, { headers: authHeaders() });
+    if (!resp.ok || requestId !== savedAbCorrectionRequest) return;
+    const saved = await resp.json();
+    const manualRows = Array.from(abRows.querySelectorAll('.ab-row')).filter(row => !row.dataset.saved);
+    abRows.innerHTML = '';
+    manualRows.forEach(row => abRows.appendChild(row));
+    for (const [key, period, start, end] of [['a', saved.a, as, ae], ['b', saved.b, bs, be]]) {
+      period.forEach(item => addAbRow({ ...item, date_key: key }, { period_start: start, period_end: end }));
+    }
+  } catch (e) { /* Existing correction records are optional to load. */ }
+}
+let savedAbCorrectionRequest = 0;
+[dateAStartInput, dateAEndInput, dateBStartInput, dateBEndInput].forEach(el => el.addEventListener('change', loadSavedAbCorrections));
 
 function collectAbOverrides() {
   return Array.from(abRows.querySelectorAll(".ab-row")).map(row => ({
@@ -355,100 +541,249 @@ function collectAbOverrides() {
 }
 
 /* ---------------- submit ---------------- */
+/* ---------------- submit: 模式根据上传的文件自动判断 ----------------
+   - 只有一组文件（A 或 B 其中一列）→ 单日/单期分析
+       · 1 个仓 → 单仓单日（后端 analysis_mode=single）
+       · 多个仓 → 每个仓各跑一次 single，前端合并成多仓单日看板
+   - A、B 两列都有文件 → 对比（单仓或多仓，后端 compare）
+   - 日期不必填：从 Route Info CSV 的 Pickup Date 自动识别；
+     只选开始日期 = 单日；结束日期留空自动等于开始日期。 */
+function csvSplitLine(line) {
+  const out = []; let cur = '', q = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (q) { if (c === '"') { if (line[i + 1] === '"') { cur += '"'; i++; } else q = false; } else cur += c; }
+    else if (c === '"') q = true;
+    else if (c === ',') { out.push(cur); cur = ''; }
+    else cur += c;
+  }
+  out.push(cur);
+  return out.map(s => s.trim());
+}
+function normDate(v) {
+  if (!v) return '';
+  let m = v.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (m) return `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}`;
+  m = v.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/); // dd/mm/yyyy
+  if (m) return `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`;
+  return '';
+}
+// 读取 CSV：判断文件类型 + 提取日期范围
+async function inspectCsv(file) {
+  const text = (await file.text()).replace(/^﻿/, '');
+  const lines = text.split(/\r?\n/).filter(l => l.trim());
+  const header = csvSplitLine(lines[0] || '').map(h => h.toLowerCase());
+  const has = n => header.includes(n);
+  let kind = 'unknown';
+  if (has('route id') && has('pickup date')) kind = 'route';
+  else if (has('route_id') && has('cost_in_pounds')) kind = 'billing';
+  let min = '', max = '';
+  if (kind === 'route') {
+    const idx = header.indexOf('pickup date');
+    for (let i = 1; i < lines.length; i++) {
+      const d = normDate(csvSplitLine(lines[i])[idx]);
+      if (!d) continue;
+      if (!min || d < min) min = d;
+      if (!max || d > max) max = d;
+    }
+  }
+  return { kind, min, max, name: file.name };
+}
+function setSubmitError(text) {
+  showMsg(text, 'error');
+  const status = document.getElementById('submit-status');
+  status.innerHTML = `<span style="color:#b03a2e;">${text}</span>`;
+}
+async function postUpload(fd) {
+  const resp = await fetch(API_BASE + "upload", { method: "POST", headers: authHeaders(), body: fd });
+  if (resp.status === 401) { showLoginGate(); throw new Error("请先登录 / Please log in"); }
+  const raw = await resp.text();
+  let body; try { body = JSON.parse(raw); } catch (e) { throw new Error(`服务器返回非 JSON（HTTP ${resp.status}）/ Server error: ${raw.slice(0, 200)}`); }
+  if (!resp.ok) throw new Error(typeof body.detail === 'string' ? body.detail : JSON.stringify(body.detail || body));
+  return body;
+}
+
 document.getElementById("btn-submit").addEventListener("click", async () => {
   const btn = document.getElementById("btn-submit");
   const status = document.getElementById("submit-status");
+  status.textContent = "";
 
-  let name, dateA, dateB;
-  if (granState === "day") {
-    name = dayNameInput.value.trim();
-    const dateARaw = dateAInput.value, dateBRaw = dateBInput.value;
-    if (!name || !dateARaw || !dateBRaw) { showMsg("请填写报告名称并选择两个日期 / Please fill in report name and pick both dates", "error"); return; }
-    dateA = dayMonthLabel(dateARaw);
-    dateB = dayMonthLabel(dateBRaw);
-  } else {
-    name = rangeNameInput.value.trim();
-    const as = dateAStartInput.value, ae = dateAEndInput.value, bs = dateBStartInput.value, be = dateBEndInput.value;
-    if (!name || !as || !ae || !bs || !be) { showMsg("请填写报告名称并选择两组起止日期 / Please fill in report name and both date ranges", "error"); return; }
-    if (as > ae || bs > be) { showMsg("起始日期不能晚于结束日期 / Start date must be before end date", "error"); return; }
-    dateA = rangeLabel(as, ae);
-    dateB = rangeLabel(bs, be);
-  }
-
-  // Route-info files are per depot/date and OPTIONAL — a depot that didn't
-  // operate a given period just has no file for it. Gather which files are
-  // actually present first, so we know which depot/date combos are "active"
-  // before deciding what needs an OPC-fallback confirmation.
-  const routeFiles = {}; // { "Manchester|a": File, ... }
+  // 1) 收集文件
+  const files = { a: {}, b: {} };
   for (const depot of DEPOTS) {
     const key = DEPOT_KEY[depot];
     const fa = document.getElementById(`f-route-${key}-a`).files[0];
     const fb = document.getElementById(`f-route-${key}-b`).files[0];
-    if (fa) routeFiles[`${depot}|a`] = fa;
-    if (fb) routeFiles[`${depot}|b`] = fb;
+    if (fa) files.a[depot] = fa;
+    if (fb) files.b[depot] = fb;
   }
-  if (Object.keys(routeFiles).length === 0) {
-    showMsg("至少要上传一个仓的route info文件 / At least one depot's route-info file is required", "error");
-    return;
-  }
+  let billA = document.getElementById("f-billing-a").files[0];
+  let billB = document.getElementById("f-billing-b").files[0];
+  const nA = Object.keys(files.a).length, nB = Object.keys(files.b).length;
+  if (!nA && !nB) { setSubmitError("请至少上传一个仓的 Route Info 文件 / Upload at least one route-info file"); return; }
 
-  const opc = {};
-  const missingOpc = []; // depots/dates with a route file but no OPC entered
-  for (const depot of DEPOTS) {
-    const key = DEPOT_KEY[depot];
-    const a = document.getElementById(`f-opc-${key}-a`).value;
-    const b = document.getElementById(`f-opc-${key}-b`).value;
-    const entry = {};
-    if (a !== "") entry.a = Number(a); else if (routeFiles[`${depot}|a`]) missingOpc.push(`${BI[depot].en} ${BI[depot].cn} · A`);
-    if (b !== "") entry.b = Number(b); else if (routeFiles[`${depot}|b`]) missingOpc.push(`${BI[depot].en} ${BI[depot].cn} · B`);
-    if (Object.keys(entry).length) opc[depot] = entry;
-  }
-
-  if (missingOpc.length) {
-    const ok = await showConfirm(
-      "没有填写OPC <span class=\"cn\" style=\"font-weight:400;color:var(--muted);\">No OPC entered</span>",
-      `以下仓/期没有填写OPC，会自动用路线级实际揽收合计代替：<br><b>${missingOpc.join(', ')}</b><br><br>继续吗？` +
-      `<span style="display:block;margin-top:10px;">These depot/period(s) have no OPC entered and will fall back to route-level actual pickup instead:<br><b>${missingOpc.join(', ')}</b><br><br>Continue?</span>`
-    );
-    if (!ok) return;
-  }
-
-  const ba = document.getElementById("f-billing-a").files[0];
-  const bb = document.getElementById("f-billing-b").files[0];
-
-  const fd = new FormData();
-  fd.append("name", name);
-  fd.append("date_a_label", dateA);
-  fd.append("date_b_label", dateB);
-  fd.append("granularity", granState);
-  fd.append("opc_json", JSON.stringify(opc));
-  fd.append("ab_overrides_json", JSON.stringify(collectAbOverrides()));
-
-  for (const depot of DEPOTS) {
-    const key = DEPOT_KEY[depot];
-    if (routeFiles[`${depot}|a`]) fd.append(`route_${key}_a`, routeFiles[`${depot}|a`]);
-    if (routeFiles[`${depot}|b`]) fd.append(`route_${key}_b`, routeFiles[`${depot}|b`]);
-  }
-  if (ba) fd.append("billing_a", ba);
-  if (bb) fd.append("billing_b", bb);
-
-  btn.disabled = true; status.textContent = "计算中… Processing…";
+  btn.disabled = true; status.textContent = "检查文件… Checking files…";
   try {
-    const resp = await fetch(API_BASE + "upload", { method: "POST", headers: authHeaders(), body: fd });
-    if (resp.status === 401) { showLoginGate(); throw new Error("请先登录 / Please log in"); }
-    const body = await resp.json();
-    if (!resp.ok) throw new Error(body.detail || "Upload failed");
-    showMsg("报告生成成功！Report generated.", "ok");
+    // 2) 检查文件类型并识别日期
+    const info = { a: {}, b: {} };
+    for (const p of ['a', 'b']) for (const [depot, f] of Object.entries(files[p])) {
+      const r = await inspectCsv(f);
+      if (r.kind === 'billing') throw new Error(`「${f.name}」是 Billing 文件，却放在了 ${BI[depot].en} 的 Route Info 栏，请放到第 3 步 Billing / This is a billing file, not route info`);
+      if (r.kind !== 'route') throw new Error(`「${f.name}」不是 Route Info 文件（缺少 Route ID / Pickup Date 列）/ Not a route-info CSV`);
+      info[p][depot] = r;
+    }
+    for (const [label, f] of [['A', billA], ['B', billB]]) if (f) {
+      const r = await inspectCsv(f);
+      if (r.kind === 'route') throw new Error(`「${f.name}」是 Route Info 文件，却放在了 Billing ${label} 栏 / This is a route-info file, not billing`);
+    }
+    const rangeOf = p => {
+      const v = Object.values(info[p]).filter(r => r.min);
+      if (!v.length) return null;
+      return { s: v.map(r => r.min).sort()[0], e: v.map(r => r.max).sort().slice(-1)[0] };
+    };
+    // 日期：用户填了就用用户的（结束为空 = 单日）；没填就用文件里的 Pickup Date
+    const pickDates = (p, sInput, eInput) => {
+      let s = sInput.value, e = eInput.value;
+      if (s && !e) e = s;
+      if (!s && e) s = e;
+      if (!s) { const r = rangeOf(p); if (r) { s = r.s; e = r.e; } }
+      if (s) { sInput.value = s; eInput.value = e; }
+      return [s, e];
+    };
+
+    const compare = nA > 0 && nB > 0;
+    let as, ae, bs, be;
+    if (compare) {
+      [as, ae] = pickDates('a', dateAStartInput, dateAEndInput);
+      [bs, be] = pickDates('b', dateBStartInput, dateBEndInput);
+      if (!as || !bs) throw new Error("无法从文件识别日期，请手动选择日期 A 和 B / Could not detect dates, please pick them");
+      if (as > ae || bs > be) throw new Error("起始日期不能晚于结束日期 / Start date must be before end date");
+      if (as > bs) { // A 应为较早日期：自动交换
+        [files.a, files.b] = [files.b, files.a];
+        [as, ae, bs, be] = [bs, be, as, ae];
+        [billA, billB] = [billB, billA];
+        [info.a, info.b] = [info.b, info.a];
+        dateAStartInput.value = as; dateAEndInput.value = ae; dateBStartInput.value = bs; dateBEndInput.value = be;
+      }
+    } else {
+      const p = nA ? 'a' : 'b';
+      const [sI, eI] = p === 'a' ? [dateAStartInput, dateAEndInput] : [dateBStartInput, dateBEndInput];
+      [as, ae] = pickDates(p, sI, eI);
+      if (!as) throw new Error("无法从文件识别日期，请手动选择日期 / Could not detect the date, please pick it");
+      if (as > ae) throw new Error("起始日期不能晚于结束日期 / Start date must be before end date");
+      bs = as; be = ae;
+      if (p === 'b') { files.a = files.b; files.b = {}; billA = billA || billB; }
+    }
+    // 文件日期与所选日期不重叠时提醒
+    for (const [p, s, e] of [['a', as, ae], ['b', bs, be]]) for (const [depot, r] of Object.entries(info[p])) {
+      if (r.min && (r.max < s || r.min > e) && !(compare === false && p === 'b' && nA)) {
+        throw new Error(`${BI[depot].en} 文件「${r.name}」日期为 ${r.min}~${r.max}，与所选日期 ${s}~${e} 不一致 / File dates don't match the selected dates`);
+      }
+    }
+
+    const dateA = periodLabel(as, ae), dateB = periodLabel(bs, be);
+    const autoName = rangeNameInput.value.trim() && nameManuallyEdited ? rangeNameInput.value.trim() : null;
+    status.textContent = "计算中… Processing…";
+
+    if (compare) {
+      granState = inferGranularity(as, ae, bs, be);
+      const name = autoName || `${periodShortLabel(as, ae)}对比${periodShortLabel(bs, be)}`;
+      rangeNameInput.value = name;
+      const fd = new FormData();
+      fd.append("analysis_mode", "compare"); fd.append("single_depot", "");
+      fd.append("name", name);
+      fd.append("date_a_label", dateA); fd.append("date_b_label", dateB);
+      fd.append("date_a_start", as); fd.append("date_a_end", ae);
+      fd.append("date_b_start", bs); fd.append("date_b_end", be);
+      fd.append("granularity", granState);
+      fd.append("opc_json", "{}");
+      fd.append("ab_overrides_json", JSON.stringify(collectAbOverrides()));
+      for (const depot of DEPOTS) {
+        const key = DEPOT_KEY[depot];
+        if (files.a[depot]) fd.append(`route_${key}_a`, files.a[depot]);
+        if (files.b[depot]) fd.append(`route_${key}_b`, files.b[depot]);
+      }
+      if (billA) fd.append("billing_a", billA);
+      if (billB) fd.append("billing_b", billB);
+      const body = await postUpload(fd);
+      renderReport(body.data, { author: body.author, granularity: body.granularity, name: body.name, report_id: body.id });
+    } else {
+      // 单日/单期：每个仓各跑一次 single
+      granState = as === ae ? "day" : "custom";
+      const depots = DEPOTS.filter(d => files.a[d]);
+      const results = [];
+      for (const depot of depots) {
+        const key = DEPOT_KEY[depot];
+        const name = (autoName ? `${autoName} · ` : '') + `${BI[depot].cn} ${periodShortLabel(as, ae)} ${as === ae ? '单日' : '单期'}分析`;
+        const fd = new FormData();
+        fd.append("analysis_mode", "single"); fd.append("single_depot", depot);
+        fd.append("name", name);
+        fd.append("date_a_label", dateA); fd.append("date_b_label", dateB);
+        fd.append("date_a_start", as); fd.append("date_a_end", ae);
+        fd.append("date_b_start", bs); fd.append("date_b_end", be);
+        fd.append("granularity", granState);
+        fd.append("opc_json", "{}");
+        fd.append("ab_overrides_json", "[]");
+        fd.append(`route_${key}_a`, files.a[depot]);
+        fd.append(`route_${key}_b`, files.a[depot]);
+        if (billA) { fd.append("billing_a", billA); fd.append("billing_b", billA); }
+        status.textContent = `计算中 ${results.length + 1}/${depots.length}… Processing ${BI[depot].en}…`;
+        const body = await postUpload(fd);
+        results.push({ depot, body });
+      }
+      if (results.length === 1) {
+        const { body } = results[0];
+        renderReport(body.data, { author: body.author, granularity: body.granularity, name: body.name, report_id: body.id });
+      } else {
+        renderMultiDepotSingleReport(results, { name: autoName || `${periodShortLabel(as, ae)} 多仓${as === ae ? '单日' : '单期'}分析`, dateLabel: dateA });
+      }
+    }
+    showMsg("看板已生成！Dashboard generated.", "ok");
     status.textContent = "";
-    renderReport(body.data, { author: body.author, granularity: body.granularity, name: body.name, report_id: body.id });
     switchView("report");
   } catch (e) {
-    showMsg("出错了 / Error: " + e.message, "error");
-    status.textContent = "";
+    setSubmitError("出错了 / Error: " + e.message);
   } finally {
     btn.disabled = false;
   }
 });
+
+// 选完 Route Info 文件立刻从 Pickup Date 自动填日期（仅在日期为空时）
+DEPOTS.forEach(depot => ['a', 'b'].forEach(p => {
+  const input = document.getElementById(`f-route-${DEPOT_KEY[depot]}-${p}`);
+  input.addEventListener('change', async () => {
+    const f = input.files[0]; if (!f) return;
+    try {
+      const r = await inspectCsv(f);
+      if (r.kind === 'billing') { setSubmitError(`「${f.name}」是 Billing 文件，请放到第 3 步 Billing 栏 / This is a billing file`); return; }
+      const [sI, eI] = p === 'a' ? [dateAStartInput, dateAEndInput] : [dateBStartInput, dateBEndInput];
+      if (r.min && !sI.value) { sI.value = r.min; eI.value = r.max; regenerateName(); loadSavedAbCorrections(); }
+    } catch (e) { /* 提交时会再检查 */ }
+  });
+}));
+
+// 多仓单日：顶部汇总对比表 + 各仓明细（各仓报告也分别保存在历史里）
+function renderMultiDepotSingleReport(results, meta) {
+  const sections = results.map(({ depot, body }) => {
+    renderSingleDepotReport(body.data, { name: body.name, author: body.author }); // 不传 report_id → 不生成重复的导出面板
+    const html = document.getElementById('report-content').innerHTML.replace(/id="warnNote"/g, '');
+    return `<div class="panel"><h3>${tagHtml(depot)} 单仓明细 <span class="cn">Depot detail</span></h3>${html}</div>`;
+  });
+  const rows = results.map(({ depot, body }) => ({ depot, s: body.data.summary?.[depot] || {}, eff: body.data.net?.job_eff21 }));
+  const tot = k => rows.reduce((a, r) => a + (Number(r.s[k]) || 0), 0);
+  const totAct = tot('act21'), totCost = tot('cost21');
+  const tr = (label, s, eff) => `<tr><td style="text-align:left;">${label}</td><td>${fmt(s.routes21)}</td><td>${fmt(s.f21)}</td><td>${fmt(s.act21)}</td><td>${s.f21 ? pct((s.act21 / s.f21 - 1) * 100) : '<span class="na">N/A</span>'}</td><td>${fmt(s.x21)}</td><td>${gbp(s.cost21, 2)}</td><td>${gbp(s.cpp21)}</td><td>${fmt(eff, 1)}</td></tr>`;
+  const root = document.getElementById('report-content');
+  document.getElementById('report-empty').style.display = 'none';
+  root.style.display = 'block';
+  root.innerHTML = `<p style="font-size:12px;color:var(--muted);">${meta.name} · ${meta.dateLabel}</p>
+    <div class="callout good">多仓单日分析：各仓数据分别计算后汇总，不做跨日期对比。各仓报告已分别保存到历史记录。<span class="cn" style="display:block;">Multi-depot single-day snapshot; each depot is also saved separately in History.</span></div>
+    <div class="panel"><h3>各仓汇总 <span class="cn">Depot summary</span></h3><div class="tblwrap"><table><thead><tr><th style="text-align:left;">Depot</th><th>Routes 路线数</th><th>Forecast 预测</th><th>Actual 实际揽收</th><th>偏差 Var%</th><th>Cancelled 取消</th><th>Cost 总成本</th><th>£/parcel 单票成本</th><th>Eff pcs/hr</th></tr></thead><tbody>
+    ${rows.map(r => tr(tagHtml(r.depot), r.s, r.eff)).join('')}
+    ${tr('<b>合计 Total</b>', { routes21: tot('routes21'), f21: tot('f21'), act21: totAct, x21: tot('x21'), cost21: totCost || null, cpp21: totCost && totAct ? totCost / totAct : null }, null)}
+    </tbody></table></div></div>
+    ${sections.join('')}`;
+}
 
 /* ---------------- history ---------------- */
 async function loadHistory() {
@@ -496,10 +831,10 @@ async function loadHistory() {
           if (dResp.status === 401) { showLoginGate(); return; }
           const dBody = await dResp.json().catch(() => ({}));
           if (!dResp.ok) throw new Error(dBody.detail || "Delete failed");
-          showMsg("报告已删除 / Report deleted.", "ok");
+          list.insertAdjacentHTML("afterbegin", '<div class="msg ok">报告已删除 / Report deleted.</div>');
           loadHistory();
         } catch (err) {
-          showMsg("删除失败 / Delete failed: " + err.message, "error");
+          list.insertAdjacentHTML("afterbegin", `<div class="msg error">删除失败 / Delete failed: ${err.message}</div>`);
         }
       });
     }
@@ -789,7 +1124,7 @@ function getActiveDepots(D) {
 // Plain-language calc/source notes shown on hover over each KPI tile —
 // answers "how is this computed" without cluttering the tile itself.
 const KPI_CALC = {
-  pickup: 'OPC-corrected actual pickup, summed across active depots (falls back to route-level actual pickup for any depot/date with no OPC entered). <br>各仓OPC修正后实际揽收量之和（未填OPC的仓/期，用路线级实际揽收合计代替）。',
+  pickup: 'OPC-corrected actual pickup, summed across active depots. Daily workbook values are summed across each selected date range; incomplete coverage falls back to route-level actual pickup. <br>逐日OPC工作簿按日期范围汇总（覆盖不完整时回退到路线级实际揽收）。',
   cpp: 'Network total billed cost ÷ network actual pickup, each period. N/A if no billing was uploaded that period. <br>全网账单总成本 ÷ 全网实际揽收量。该期未上传账单则为N/A。',
   fcstdev: '(Actual − Forecast) / Forecast, network-wide, each period. <br>(实际揽收 − 预测量) / 预测量，全网口径。',
   routes: 'Count of distinct routes across active depots (route-info row count — not "routes with a matched billing cost"). <br>各活跃仓的路线条数之和（按route-info行数计，非"有账单匹配"的路线数）。',
@@ -801,6 +1136,7 @@ const KPI_CALC = {
    REPORT RENDERING — builds the report from a fetched JSON `D`
    ============================================================ */
 function renderReport(D, meta = {}) {
+  if (D.analysis_mode === 'single') return renderSingleDepotReport(D, meta);
   document.getElementById("report-empty").style.display = "none";
   const root = document.getElementById("report-content");
   root.style.display = "block";
@@ -843,7 +1179,8 @@ function renderReport(D, meta = {}) {
   // number — surfaces D.depot_active / S[d].opc_source_a/b from the backend.
   const inactiveBadge = '<span class="badge-inactive">未运营 Not operating</span>';
   const fallbackBadge = (src, label) => src === 'fallback'
-    ? `<span class="badge-fallback" title="没有手动填写OPC，已用路线级实际揽收合计代替 / No manual OPC entered — using route-level actual pickup instead">${label}回退 fallback</span>` : '';
+    ? `<span class="badge-fallback" title="每日 OPC 数据不完整，已用路线级实际揽收合计代替 / Daily OPC data incomplete — using route-level actual pickup instead">${label}回退 fallback</span>`
+    : src === 'daily_workbook' ? `<span class="pos" title="来自逐日 OPC 工作簿 / From daily OPC workbook">${label}Excel OPC</span>` : '';
   activeDepots.forEach(d => {
     const s = S[d];
     const dRoutes = pctChange(s.routes21, s.routes14), dAct = pctChange(s.act21, s.act14), dCpp = pctChange(s.cpp21, s.cpp14);
@@ -873,7 +1210,7 @@ function renderReport(D, meta = {}) {
     <td class="tabular">${fmt(NET.f14)} → ${fmt(NET.f21)}</td><td class="tabular">${fmt(NET.act14)} → ${fmt(NET.act21)}</td>
     <td class="tabular">${pct(gapNet14)}</td><td class="tabular">${pct(gapNet21)}</td>
     <td class="tabular pos">${pct(netDAct)}</td>
-    <td class="tabular">${gbp(NET.cpp14)} → ${gbp(NET.cpp21)}</td><td class="tabular neg">${pct(netDCpp)}</td>
+    <td class="tabular">${gbp(NET.cpp14)} → ${gbp(NET.cpp21)}</td><td class="tabular ${costTrendClass(netDCpp)}">${pct(netDCpp)}</td>
     <td class="tabular">${totCancel14} → ${totCancel21}</td><td><span class="na">—</span></td>
   </tr>`;
 
@@ -976,9 +1313,9 @@ function renderReport(D, meta = {}) {
 
   const netSummaryTable = document.getElementById('netSummaryTable');
   const netRows = [
-    ['Total cost / 总成本', gbp(NET.cost14, 2), gbp(NET.cost21, 2), pct((NET.cost21 / NET.cost14 - 1) * 100), 'neg'],
+    ['Total cost / 总成本', gbp(NET.cost14, 2), gbp(NET.cost21, 2), pct(pctChange(NET.cost21, NET.cost14)), costTrendClass(pctChange(NET.cost21, NET.cost14))],
     ['Actual pickup / 实际揽收', fmt(NET.act14), fmt(NET.act21), pct((NET.act21 / NET.act14 - 1) * 100), 'pos'],
-    ['£ / parcel / 单票成本', gbp(NET.cpp14), gbp(NET.cpp21), pct((NET.cpp21 / NET.cpp14 - 1) * 100), 'neg'],
+    ['£ / parcel / 单票成本', gbp(NET.cpp14), gbp(NET.cpp21), pct(pctChange(NET.cpp21, NET.cpp14)), costTrendClass(pctChange(NET.cpp21, NET.cpp14))],
     ['Total routes / 总路线数', NET.routes14, NET.routes21, pct((NET.routes21 / NET.routes14 - 1) * 100), 'neg'],
     ['Parcels / route / 单路线产出', fmt(NET.ppr14, 1), fmt(NET.ppr21, 1), pct((NET.ppr21 / NET.ppr14 - 1) * 100), 'neg'],
   ];
@@ -1072,6 +1409,27 @@ function renderReport(D, meta = {}) {
   initInsightsPanel(meta);
 }
 
+function renderSingleDepotReport(D, meta = {}) {
+  document.getElementById('report-empty').style.display='none';
+  const root=document.getElementById('report-content'); root.style.display='block';
+  const depot=D.single_depot, summary=D.summary?.[depot]||{}, esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const kpis=[
+    ['Actual pickup 实际揽收',fmt(summary.act21)],['Forecast 预测量',fmt(summary.f21)],
+    ['Routes 路线数',fmt(summary.routes21)],['Total cost 总成本',gbp(summary.cost21,2)],
+    ['Cost / parcel 单票成本',gbp(summary.cpp21)],['Completed 完成量',fmt(summary.c21)],
+    ['Cancellations 取消数',fmt(summary.x21)],['Efficiency 效率 (pcs/hr)',fmt(D.net?.job_eff21,1)],
+  ];
+  const rows=(D.single_routes||[]).slice().sort((a,b)=>(b.actual_pickup||0)-(a.actual_pickup||0));
+  root.innerHTML=`<p style="font-size:12px;color:var(--muted);">${esc(meta.name||'单仓单日分析')} · ${tagHtml(depot)} · ${esc(D.date_b_label)} · 作者 ${esc(meta.author||'')}</p>
+    <div class="callout good">这是单仓单日数据分析快照，不与其他日期或仓库比较。<span class="cn" style="display:block;">Single-depot, single-day snapshot; no cross-date or cross-depot comparison is implied.</span></div>
+    <div id="warnNote" class="msg error" style="display:${D.warnings?.length?'block':'none'};">${(D.warnings||[]).map(esc).join('<br>')}</div>
+    <div class="kpirow" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));">${kpis.map(([label,value])=>`<div class="kpi"><div class="lbl">${label}</div><div class="val tabular">${value}</div></div>`).join('')}</div>
+    <div class="panel"><h3>路线明细 Route details</h3><div class="tblwrap"><table><thead><tr><th>Route ID</th><th>Driver</th><th>Vehicle</th><th>Forecast</th><th>Actual</th><th>Completed</th><th>Cancelled</th><th>Duration min</th><th>Distance mi</th><th>Cost</th><th>£/parcel</th><th>Scan pcs/hr</th></tr></thead><tbody>${rows.length?rows.map(r=>`<tr><td style="text-align:left;">${esc(r.route_id)}</td><td style="text-align:left;">${esc(r.driver)}</td><td style="text-align:left;">${esc(r.vehicle)}</td><td>${fmt(r.forecast_pickup)}</td><td>${fmt(r.actual_pickup)}</td><td>${fmt(r.completed)}</td><td>${fmt(r.cancelled)}</td><td>${fmt(r.duration_min,1)}</td><td>${fmt(r.distance_miles,1)}</td><td>${gbp(r.cost,2)}</td><td>${gbp(r.cost_per_parcel)}</td><td>${fmt(r.scan_efficiency,1)}</td></tr>`).join(''):'<tr><td class="na" colspan="12" style="text-align:center;">没有路线数据 / No route data</td></tr>'}</tbody></table></div></div>
+    <div class="panel"><h3>取消原因 Cancellation reasons</h3><div class="tblwrap"><table><thead><tr><th style="text-align:left;">Reason</th><th>Count</th></tr></thead><tbody>${Object.entries(D.reasons_b||{}).length?Object.entries(D.reasons_b).sort((a,b)=>b[1]-a[1]).map(([reason,count])=>`<tr><td style="text-align:left;">${esc(reason)}</td><td>${fmt(count)}</td></tr>`).join(''):'<tr><td colspan="2" class="na" style="text-align:center;">无取消记录 / No cancellations</td></tr>'}</tbody></table></div></div>
+    ${meta.report_id&& (currentUserIsAdmin||currentUserAiAllowed)?`<div class="panel insights-panel" id="insightsPanel"><h3>导出数据给 AI 分析 <span class="cn">Export data for analysis in your own AI chat</span></h3><div class="insights-controls"><button class="primary" id="btn-export-insights" type="button">导出数据给 AI 分析</button><button class="secondary" id="btn-copy-insights" type="button" style="display:none;">复制 Copy</button><button class="secondary" id="btn-download-insights" type="button" style="display:none;">下载 .txt</button><span id="insightsStatus" class="insights-status"></span></div><div id="insightsOutput" class="insights-output"></div></div>`:''}`;
+  if(meta.report_id&&(currentUserIsAdmin||currentUserAiAllowed)) initInsightsPanel(meta);
+}
+
 /* ============================================================
    AI EXPORT — this app never calls any AI service itself. Instead it
    fetches a paste-ready text block (house methodology + this report's
@@ -1083,7 +1441,7 @@ function renderReport(D, meta = {}) {
 async function initInsightsPanel(meta) {
   const panel = document.getElementById('insightsPanel');
   if (!panel) return;
-  if (!meta.report_id) { panel.style.display = 'none'; return; }
+  if (!meta.report_id || (!currentUserIsAdmin && !currentUserAiAllowed)) { panel.style.display = 'none'; return; }
   panel.style.display = 'block';
   const btn = document.getElementById('btn-export-insights');
   const copyBtn = document.getElementById('btn-copy-insights');
@@ -1093,7 +1451,7 @@ async function initInsightsPanel(meta) {
 
   copyBtn.style.display = 'none';
   downloadBtn.style.display = 'none';
-  out.innerHTML = '<p class="na">点击"导出给AI分析"——生成包含方法论说明和本报告数据的文本，可直接复制粘贴到你自己的AI对话（Claude / ChatGPT等）中使用。<span style="display:block;">Click "Export for AI analysis" — this generates a text block with the methodology brief and this report\'s data, ready to paste directly into your own AI chat (Claude, ChatGPT, etc.).</span></p>';
+  out.innerHTML = '<p class="na">网站负责整理指标和展示看板，不会在站内生成 AI 叙述分析。点击下方导出方法论和精简数据，再粘贴到你自己的 AI 对话中进行分析。<span style="display:block;">This site organizes metrics into a dashboard; it does not generate AI narrative analysis. Export the methodology and compact data below, then paste them into your own AI chat for analysis.</span></p>';
   status.textContent = '';
 
   let exportText = '';
@@ -1165,14 +1523,14 @@ function buildReportSkeleton(D, meta = {}) {
   return `
   ${metaLine}
   <div class="panel insights-panel" id="insightsPanel" style="display:none;">
-    <h3>导出给AI分析 <span class="cn">生成方法论+数据文本，粘贴到你自己的AI对话中生成洞察 / Export a methodology+data text block to paste into your own AI chat</span></h3>
+    <h3>导出数据给 AI 分析 <span class="cn">网站提供指标看板；导出方法论和精简数据，交给你自己的 AI 分析 / Export the method and compact data for analysis in your own AI chat</span></h3>
     <div class="insights-controls">
-      <button class="primary" id="btn-export-insights" type="button">导出给AI分析 Export for AI analysis</button>
+      <button class="primary" id="btn-export-insights" type="button">导出数据给 AI 分析 Export data for AI analysis</button>
       <button class="secondary" id="btn-copy-insights" type="button" style="display:none;">复制 Copy</button>
       <button class="secondary" id="btn-download-insights" type="button" style="display:none;">下载.txt Download .txt</button>
       <span id="insightsStatus" class="insights-status"></span>
     </div>
-    <div id="insightsOutput" class="insights-output"><p class="na">点击"导出给AI分析"——生成包含方法论说明和本报告数据的文本，可直接复制粘贴到你自己的AI对话（Claude / ChatGPT等）中使用。<span style="display:block;">Click "Export for AI analysis" — this generates a text block with the methodology brief and this report's data, ready to paste directly into your own AI chat (Claude, ChatGPT, etc.).</span></p></div>
+    <div id="insightsOutput" class="insights-output"><p class="na">网站负责整理指标和展示看板，不会在站内生成 AI 叙述分析。点击下方导出方法论和精简数据，再粘贴到你自己的 AI 对话中进行分析。<span style="display:block;">This site organizes metrics into a dashboard; it does not generate AI narrative analysis. Export the methodology and compact data below, then paste them into your own AI chat for analysis.</span></p></div>
   </div>
 
   <div class="kpirow" id="kpiRow"></div>
