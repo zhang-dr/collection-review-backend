@@ -53,6 +53,14 @@ if (location.pathname !== "/" && !location.pathname.endsWith("/")) {
       <button class="secondary" id="btn-user-cancel" type="button" style="flex:1;">取消 Cancel</button>
       <button class="primary" id="btn-user-create" type="button" style="flex:1;">创建 Create</button>
     </div>
+    <hr style="border:0;border-top:1px solid var(--line);margin:24px 0 18px;">
+    <h2>AI 配置 <span class="cn" style="font-weight:400;color:var(--muted);">AI settings</span></h2>
+    <p class="hint" style="margin:0 0 14px;">密钥只保存在服务器端，保存后不会再次显示。<span style="display:block;">Keys are stored server-side and are never displayed again.</span></p>
+    <div class="field"><label>服务商 <span class="cn">Provider</span></label><select id="f-ai-provider"><option value="openai">OpenAI</option><option value="claude">Claude</option><option value="gemini">Gemini</option></select></div>
+    <div class="field"><label>API 密钥 <span class="cn">API key</span></label><input type="password" id="f-ai-key" autocomplete="off" placeholder="粘贴新的密钥 / paste a new key"></div>
+    <div class="field"><label>模型（可选）<span class="cn">Model — optional</span></label><input type="text" id="f-ai-model" placeholder="留空使用默认模型"></div>
+    <div id="aiSettingsStatus" class="hint" style="margin:0 0 12px;"></div>
+    <button class="primary" id="btn-ai-save" type="button" style="width:100%;">保存 AI 配置 Save</button>
   </div>
 </div>
 
