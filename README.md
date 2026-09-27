@@ -5,20 +5,33 @@ totals, and any AB-scan overrides — the app recomputes the same weekly
 diagnostic that was previously built by hand, and keeps a history of every
 report generated.
 
-Core v1 scope: overall review table, forecast-vs-actual, cancellation
-analysis, and cost analysis (£/parcel + priority routes for review). Vehicle
-mix (§04 in the manual report series) is not in this version.
+Scope: overall review table, forecast-vs-actual, cancellation analysis,
+vehicle/duration structure (§04), and cost analysis (£/parcel + priority
+routes for review, with B-scan verification candidates). Route-info and
+billing uploads are optional per depot/date — a depot that didn't operate a
+given period is simply left blank and the report treats it as "not
+operating" rather than erroring. OPC-corrected actual pickup is optional
+too: leave it blank and the report falls back to that depot's route-level
+actual pickup total (flagged in the UI as a "fallback", not silently shown
+as OPC-confirmed). There's also an optional AI-generated narrative — see
+"AI-generated insights" below.
 
 ## What's inside
 
 ```
 backend/
   app/
-    main.py       FastAPI app: /api/upload, /api/reports, /api/reports/{id}
+    main.py       FastAPI app: /api/upload, /api/reports, /api/reports/{id},
+                   /api/auth/*, /api/insights/providers,
+                   /api/reports/{id}/insights
     pipeline.py    All the business logic (OPC/AB-scan handling, cost calcs,
                    forecast deviation, cancellation analysis, percentile-based
                    priority-route flagging, repeat-driver detection)
+    auth.py        Lightweight username(+optional password) login
     db.py          SQLite persistence (data/reports.db)
+    insights.py    Optional AI-generated narrative — the only part of the
+                   app that calls a third-party service (Claude / Gemini /
+                   ChatGPT), and only when a user clicks "Generate insights"
     static/        Frontend — plain HTML/CSS/JS, zero build step, zero
                    external dependencies (all charts are native CSS/inline SVG)
   requirements.txt
@@ -182,13 +195,49 @@ The app's own path-detection (`API_BASE` in `app.js`) and the `$PORT`
 handling in the `Dockerfile` mean nothing in the app itself needs to change
 for this path — only the platform account and the Netlify rewrite rule.
 
+## AI-generated insights (optional)
+
+The report has an "AI 洞察 / AI-generated insights" panel that turns the
+computed numbers into a McKinsey-style narrative — headline-as-conclusion,
+bilingual, fact-based bullets citing the actual figures — instead of just
+charts and tables. It's entirely optional and strictly opt-in: nothing is
+sent anywhere until a user clicks "Generate insights" on a specific report,
+and the result is cached (`reports.insights` in the DB) so re-opening that
+report later doesn't spend another API call.
+
+Three providers are supported so you aren't locked into one vendor — pick
+whichever you already have an API key for. Each is enabled independently by
+setting its API-key environment variable on the server (Railway → your
+service → Variables, or the equivalent on whatever platform you used above);
+a provider with no key set simply shows as "未配置 / not configured" in the
+dropdown and can't be selected.
+
+| Provider | API key env var | Model env var (optional) | Default model |
+|---|---|---|---|
+| Claude (Anthropic) | `ANTHROPIC_API_KEY` | `ANTHROPIC_MODEL` | `claude-sonnet-4-5` |
+| Gemini (Google) | `GEMINI_API_KEY` | `GEMINI_MODEL` | `gemini-2.5-flash` |
+| ChatGPT (OpenAI) | `OPENAI_API_KEY` | `OPENAI_MODEL` | `gpt-4o-mini` |
+
+You only need to set the key(s) for the provider(s) you actually want
+available — setting none just hides/disables the feature (the button still
+works, it returns a clear "not configured" error). Optionally set
+`AI_PROVIDER` (`claude` / `gemini` / `openai`) to change which provider is
+pre-selected in the dropdown; it defaults to `claude`.
+
+These are the only environment variables this app ever reads a secret from,
+and it never stores the key itself anywhere — each request reads it fresh
+from the environment and calls the provider's API directly over HTTPS
+(stdlib `urllib`, no extra pip dependency).
+
 ## Before you expose this publicly: add access control
 
-**The app has no login of its own.** Anyone who can reach the URL can upload
-data and read every saved report — fine on `localhost` during UAT, not fine
-once it's on a public domain, since this handles route-level commercial data
-(costs, driver names, merchant names). Before putting it on your domain,
-add access control at the reverse-proxy layer, e.g. nginx HTTP basic auth:
+Anyone who can log in (any username, first login auto-creates the account —
+see "Run it locally" above) can upload data and read every saved report.
+The built-in login is a convenience for telling reports apart by author, not
+a real security boundary — fine for a trusted team, not enough on its own
+once route-level commercial data (costs, driver names, merchant names) is on
+a public domain. Before putting it on your domain, also add access control
+at the reverse-proxy layer, e.g. nginx HTTP basic auth:
 
 ```nginx
 location / {
