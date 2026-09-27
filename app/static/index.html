@@ -9,7 +9,7 @@ if (location.pathname !== "/" && !location.pathname.endsWith("/")) {
 }
 </script>
 <title>Collection Network Review</title>
-<link rel="stylesheet" href="style.css?v=10">
+<link rel="stylesheet" href="style.css?v=11">
 </head>
 <body>
 
@@ -22,10 +22,10 @@ if (location.pathname !== "/" && !location.pathname.endsWith("/")) {
     <button data-view="upload" class="active">上传数据 Upload</button>
     <button data-view="report">报告 Report</button>
     <button data-view="history">历史 History</button>
+    <button data-view="admin" id="navAdminBtn" hidden>管理 Admin</button>
   </nav>
   <div class="userbar" id="userbar" hidden>
     <span>已登录 <span class="uname" id="userbarName"></span></span>
-    <button type="button" id="btn-manage-users" hidden>创建账号</button>
     <button type="button" id="btn-logout">登出 Logout</button>
   </div>
 </header>
@@ -34,34 +34,12 @@ if (location.pathname !== "/" && !location.pathname.endsWith("/")) {
 <div class="login-gate" id="loginGate">
   <div class="login-card">
     <h2>登录 <span class="cn" style="font-weight:400;color:var(--muted);">Login</span></h2>
-    <p class="sub">请使用管理员已创建的账号登录。<span style="display:block;">Sign in with an account created by the administrator.</span></p>
+    <p class="sub">账号需由管理员 Xihao 创建，如果还没有账号请联系管理员开通。<span style="display:block;">Accounts are created by the admin (Xihao) — contact them if you don't have one yet.</span></p>
     <div class="field"><label>用户名 <span class="cn">Username</span></label><input type="text" id="f-login-user" autocomplete="username"></div>
     <div class="field"><label>密码 <span class="cn">Password</span></label><input type="password" id="f-login-pass" autocomplete="current-password"></div>
     <button class="primary" id="btn-login" type="button" style="width:100%;">登录 Login</button>
     <div id="loginError" class="msg error" style="display:none;margin-top:12px;margin-bottom:0;"></div>
-    <p class="hint">报告会记录当前登录账号作为作者。账号只能由管理员创建。<span style="display:block;margin-top:4px;">Reports record the signed-in user as their author. Only the administrator can create accounts.</span></p>
-  </div>
-</div>
-
-<div class="login-gate" id="userModal" hidden style="background:rgba(24,28,34,.55);">
-  <div class="login-card">
-    <h2>创建账号 <span class="cn" style="font-weight:400;color:var(--muted);">Create account</span></h2>
-    <div class="field"><label>用户名 <span class="cn">Username</span></label><input type="text" id="f-new-user" autocomplete="off"></div>
-    <div class="field"><label>密码 <span class="cn">Password</span></label><input type="password" id="f-new-pass" autocomplete="new-password"></div>
-    <div id="userModalMsg" class="msg" style="display:none;margin:0 0 12px;"></div>
-    <div style="display:flex;gap:10px;">
-      <button class="secondary" id="btn-user-cancel" type="button" style="flex:1;">取消 Cancel</button>
-      <button class="primary" id="btn-user-create" type="button" style="flex:1;">创建 Create</button>
-    </div>
-    <div id="userAccessList" style="margin-top:16px;"></div>
-    <hr style="border:0;border-top:1px solid var(--line);margin:24px 0 18px;">
-    <h2>AI 配置 <span class="cn" style="font-weight:400;color:var(--muted);">AI settings</span></h2>
-    <p class="hint" style="margin:0 0 14px;">密钥只保存在服务器端，保存后不会再次显示。<span style="display:block;">Keys are stored server-side and are never displayed again.</span></p>
-    <div class="field"><label>服务商 <span class="cn">Provider</span></label><select id="f-ai-provider"><option value="openai">OpenAI</option><option value="claude">Claude</option><option value="gemini">Gemini</option></select></div>
-    <div class="field"><label>API 密钥 <span class="cn">API key</span></label><input type="password" id="f-ai-key" autocomplete="off" placeholder="粘贴新的密钥 / paste a new key"></div>
-    <div class="field"><label>模型（可选）<span class="cn">Model — optional</span></label><input type="text" id="f-ai-model" placeholder="留空使用默认模型"></div>
-    <div id="aiSettingsStatus" class="hint" style="margin:0 0 12px;"></div>
-    <button class="primary" id="btn-ai-save" type="button" style="width:100%;">保存 AI 配置 Save</button>
+    <p class="hint">报告会记录你的用户名作为作者。密码只是用来防止别人用同一个用户名登录，不是完整的账号安全体系，请勿用重要密码。<span style="display:block;margin-top:4px;">The report author is taken from your username. The password just stops someone else logging in as the same name — it isn't a real security system, so don't reuse an important password.</span></p>
   </div>
 </div>
 
@@ -89,6 +67,7 @@ if (location.pathname !== "/" && !location.pathname.endsWith("/")) {
         <button type="button" class="gran-btn" data-gran="day"><strong>日对比</strong><span class="cn">Day vs day</span></button>
         <button type="button" class="gran-btn" data-gran="week"><strong>周对比</strong><span class="cn">Week vs week (date range)</span></button>
         <button type="button" class="gran-btn" data-gran="month"><strong>月对比</strong><span class="cn">Month vs month (date range)</span></button>
+        <button type="button" class="gran-btn" data-gran="custom"><strong>自定义对比</strong><span class="cn">Custom date range</span></button>
       </div>
     </div>
 
@@ -182,8 +161,44 @@ if (location.pathname !== "/" && !location.pathname.endsWith("/")) {
     </div>
   </section>
 
+  <!-- ==================== ADMIN VIEW (visible to the admin account only) ==================== -->
+  <section id="view-admin" class="view">
+    <div class="panel">
+      <h3>创建账号 <span class="cn">Create account</span></h3>
+      <p style="font-size:11.5px;color:var(--muted);margin:0 0 14px;">新账号默认没有 AI 洞察权限，创建后在下面的表格里逐个开通。<span style="display:block;">New accounts have AI-insights access off by default — turn it on per account in the table below.</span></p>
+      <div class="grid3">
+        <div class="field"><label>用户名 <span class="cn">Username</span></label><input type="text" id="f-admin-newuser"></div>
+        <div class="field"><label>密码 <span class="cn">Password</span></label><input type="password" id="f-admin-newpass" autocomplete="new-password"></div>
+        <div class="field" style="display:flex;align-items:flex-end;margin-bottom:15px;"><button class="primary" id="btn-admin-create" type="button" style="width:100%;">创建 Create</button></div>
+      </div>
+      <div id="adminCreateMsg"></div>
+    </div>
+    <div class="panel">
+      <h3>账号与 AI 权限 <span class="cn">Accounts &amp; AI access</span></h3>
+      <div class="tblwrap">
+        <table><thead><tr>
+          <th style="text-align:left;">Username</th>
+          <th style="text-align:left;">Admin<span class="cn">管理员</span></th>
+          <th style="text-align:left;">AI 洞察权限<span class="cn">AI access</span></th>
+          <th style="text-align:left;">创建时间<span class="cn">Created</span></th>
+        </tr></thead><tbody id="adminUserTable"></tbody></table>
+      </div>
+    </div>
+    <div class="panel">
+      <h3>AI 服务配置 <span class="cn">AI provider settings</span></h3>
+      <p style="font-size:11.5px;color:var(--muted);margin:0 0 14px;">密钥只保存在服务器端，保存后不会再次显示。<span style="display:block;">Keys are stored server-side and are never displayed again.</span></p>
+      <div class="grid3">
+        <div class="field"><label>服务商 <span class="cn">Provider</span></label><select id="f-ai-provider"><option value="openai">OpenAI</option><option value="claude">Claude</option><option value="gemini">Gemini</option></select></div>
+        <div class="field"><label>API 密钥 <span class="cn">API key</span></label><input type="password" id="f-ai-key" autocomplete="off" placeholder="粘贴新的密钥"></div>
+        <div class="field"><label>模型（可选）<span class="cn">Model — optional</span></label><input type="text" id="f-ai-model" placeholder="留空使用默认模型"></div>
+      </div>
+      <div id="aiSettingsStatus" style="font-size:11.5px;color:var(--muted);margin-bottom:10px;"></div>
+      <button class="primary" id="btn-ai-save" type="button">保存 AI 配置 Save</button>
+    </div>
+  </section>
+
 </div>
 
-<script src="app.js?v=10"></script>
+<script src="app.js?v=11"></script>
 </body>
 </html>
