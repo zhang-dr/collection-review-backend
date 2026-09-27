@@ -728,9 +728,18 @@ def compute_report(inp: ComputeInputs) -> dict:
     vehicle_mix.sort(key=lambda x: -x["routes_b"])
 
     # ---- §04 duration-bucket structure (5d), per depot + network, both periods ----
-    def bucket_counts(pool: pd.DataFrame) -> pd.Series:
+    def bucket_counts(pool: pd.DataFrame) -> pd.DataFrame:
+        # Route counts AND £/parcel per bucket, in one groupby — cost/act
+        # follow the same "count-then-null-out" pattern as vehicle_mix_agg
+        # above, so a bucket with no billing match shows £/parcel as None
+        # rather than a misleading £0.00.
         p = pool[pool["dur_bucket"].notna()]
-        return p.groupby("dur_bucket").size().reindex(DURATION_BUCKETS, fill_value=0)
+        g = p.groupby("dur_bucket").agg(
+            n=("route_id", "count"), cost=("cost", "sum"), cost_n=("cost", "count"), act=("act_pickup", "sum"),
+        ).reindex(DURATION_BUCKETS, fill_value=0)
+        g.loc[g["cost_n"] == 0, "cost"] = np.nan
+        g["cpp"] = g["cost"] / g["act"]
+        return g
 
     duration_buckets = {}
     for dep_key in DEPOTS + ["Network"]:
@@ -739,14 +748,19 @@ def compute_report(inp: ComputeInputs) -> dict:
         else:
             pa_d, pb_d = pool_a[pool_a["depot"] == dep_key], pool_b[pool_b["depot"] == dep_key]
         ca, cb = bucket_counts(pa_d), bucket_counts(pb_d)
-        total_a, total_b = int(ca.sum()), int(cb.sum())
+        total_a, total_b = int(ca["n"].sum()), int(cb["n"].sum())
         rows = []
         for buck in DURATION_BUCKETS:
-            na, nb = int(ca[buck]), int(cb[buck])
+            na, nb = int(ca.loc[buck, "n"]), int(cb.loc[buck, "n"])
             sa = round(na / total_a * 100, 2) if total_a else 0.0
             sb = round(nb / total_b * 100, 2) if total_b else 0.0
+            cppa = float(ca.loc[buck, "cpp"]) if pd.notna(ca.loc[buck, "cpp"]) else None
+            cppb = float(cb.loc[buck, "cpp"]) if pd.notna(cb.loc[buck, "cpp"]) else None
             rows.append({"bucket": buck, "n_a": na, "n_b": nb, "share_a": sa, "share_b": sb,
-                         "share_pp": round(sb - sa, 2)})
+                         "share_pp": round(sb - sa, 2),
+                         "cpp_a": round(cppa, 4) if cppa is not None else None,
+                         "cpp_b": round(cppb, 4) if cppb is not None else None,
+                         "cpp_pct": round((cppb - cppa) / cppa * 100, 2) if (cppa and cppb is not None) else None})
         duration_buckets[dep_key] = {"total_a": total_a, "total_b": total_b, "rows": rows}
 
     # ---- B-scan verification candidates (system-suggested only), latest date ----
