@@ -7,6 +7,11 @@ DB_PATH = Path(__file__).resolve().parent.parent / "data" / "reports.db"
 DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 
+def _column_exists(conn, table: str, column: str) -> bool:
+    cols = [r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()]
+    return column in cols
+
+
 def init_db():
     with get_conn() as conn:
         conn.execute("""
@@ -18,6 +23,29 @@ def init_db():
                 date_b_label TEXT NOT NULL,
                 data_json TEXT NOT NULL,
                 warnings_json TEXT NOT NULL DEFAULT '[]'
+            )
+        """)
+        # migration: older deployments may not have these columns yet.
+        if not _column_exists(conn, "reports", "author"):
+            conn.execute("ALTER TABLE reports ADD COLUMN author TEXT NOT NULL DEFAULT ''")
+        if not _column_exists(conn, "reports", "granularity"):
+            conn.execute("ALTER TABLE reports ADD COLUMN granularity TEXT NOT NULL DEFAULT 'day'")
+
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT NOT NULL UNIQUE,
+                password_salt TEXT NOT NULL DEFAULT '',
+                password_hash TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS sessions (
+                token TEXT PRIMARY KEY,
+                user_id INTEGER NOT NULL,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                FOREIGN KEY (user_id) REFERENCES users (id)
             )
         """)
         conn.commit()
@@ -33,11 +61,18 @@ def get_conn():
         conn.close()
 
 
-def save_report(name: str, date_a_label: str, date_b_label: str, data: dict) -> int:
+# ---------------------------------------------------------------------------
+# Reports
+# ---------------------------------------------------------------------------
+
+def save_report(name: str, date_a_label: str, date_b_label: str, data: dict,
+                 author: str = "", granularity: str = "day") -> int:
     with get_conn() as conn:
         cur = conn.execute(
-            "INSERT INTO reports (name, date_a_label, date_b_label, data_json, warnings_json) VALUES (?, ?, ?, ?, ?)",
-            (name, date_a_label, date_b_label, json.dumps(data), json.dumps(data.get("warnings", []))),
+            "INSERT INTO reports (name, date_a_label, date_b_label, data_json, warnings_json, author, granularity) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (name, date_a_label, date_b_label, json.dumps(data), json.dumps(data.get("warnings", [])),
+             author, granularity),
         )
         conn.commit()
         return cur.lastrowid
@@ -46,7 +81,8 @@ def save_report(name: str, date_a_label: str, date_b_label: str, data: dict) -> 
 def list_reports() -> list[dict]:
     with get_conn() as conn:
         rows = conn.execute(
-            "SELECT id, created_at, name, date_a_label, date_b_label FROM reports ORDER BY id DESC"
+            "SELECT id, created_at, name, date_a_label, date_b_label, author, granularity "
+            "FROM reports ORDER BY id DESC"
         ).fetchall()
         return [dict(r) for r in rows]
 
@@ -67,3 +103,52 @@ def delete_report(report_id: int) -> bool:
         cur = conn.execute("DELETE FROM reports WHERE id = ?", (report_id,))
         conn.commit()
         return cur.rowcount > 0
+
+
+# ---------------------------------------------------------------------------
+# Users / sessions (lightweight auth — no email verification, no password
+# reset flow; a username is unique per account and a password is optional)
+# ---------------------------------------------------------------------------
+
+def get_user_by_username(username: str) -> dict | None:
+    with get_conn() as conn:
+        row = conn.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
+        return dict(row) if row else None
+
+
+def get_user_by_id(user_id: int) -> dict | None:
+    with get_conn() as conn:
+        row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+        return dict(row) if row else None
+
+
+def create_user(username: str, password_salt: str, password_hash: str) -> dict:
+    with get_conn() as conn:
+        cur = conn.execute(
+            "INSERT INTO users (username, password_salt, password_hash) VALUES (?, ?, ?)",
+            (username, password_salt, password_hash),
+        )
+        conn.commit()
+        return {"id": cur.lastrowid, "username": username,
+                "password_salt": password_salt, "password_hash": password_hash}
+
+
+def create_session(user_id: int, token: str) -> None:
+    with get_conn() as conn:
+        conn.execute("INSERT INTO sessions (token, user_id) VALUES (?, ?)", (token, user_id))
+        conn.commit()
+
+
+def get_user_by_token(token: str) -> dict | None:
+    with get_conn() as conn:
+        row = conn.execute("""
+            SELECT users.* FROM sessions JOIN users ON users.id = sessions.user_id
+            WHERE sessions.token = ?
+        """, (token,)).fetchone()
+        return dict(row) if row else None
+
+
+def delete_session(token: str) -> None:
+    with get_conn() as conn:
+        conn.execute("DELETE FROM sessions WHERE token = ?", (token,))
+        conn.commit()
