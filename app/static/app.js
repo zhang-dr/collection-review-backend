@@ -1213,20 +1213,53 @@ async function initInsightsPanel(meta) {
     }
     const provider = sel.value;
     btn.disabled = true;
-    status.textContent = '生成中…可能需要几十秒 Generating… may take up to a minute';
     out.style.opacity = '0.5';
+
+    async function parseJsonResponse(resp) {
+      const raw = await resp.text();
+      try {
+        return JSON.parse(raw);
+      } catch (parseErr) {
+        throw new Error(`服务器返回了非JSON响应（HTTP ${resp.status}），可能是网关错误。 / The server returned a non-JSON response (HTTP ${resp.status}).`);
+      }
+    }
+
+    let pollTimer = null;
+    const startedAt = Date.now();
+    const showElapsed = () => {
+      const secs = Math.round((Date.now() - startedAt) / 1000);
+      status.textContent = `生成中… 已用时 ${secs} 秒（完整分析可能需要 30 秒到 2 分钟）Generating… ${secs}s elapsed (a full analysis can take 30s–2min)`;
+    };
     try {
-      const resp = await fetch(`${API_BASE}reports/${meta.report_id}/insights?provider=${encodeURIComponent(provider)}&force=true`,
+      const startResp = await fetch(`${API_BASE}reports/${meta.report_id}/insights/start?provider=${encodeURIComponent(provider)}&force=true`,
         { method: 'POST', headers: authHeaders() });
-      if (resp.status === 401) { showLoginGate(); throw new Error('请先登录 / Please log in'); }
-      const body = await resp.json();
-      if (!resp.ok) throw new Error(body.detail || 'Generation failed');
-      out.innerHTML = renderMarkdownLite(body.insights);
-      status.textContent = `由 ${body.provider} 生成 · generated via ${body.provider}`;
+      if (startResp.status === 401) { showLoginGate(); throw new Error('请先登录 / Please log in'); }
+      const startBody = await parseJsonResponse(startResp);
+      if (!startResp.ok) throw new Error(startBody.detail || 'Generation failed to start');
+
+      let result;
+      if (startBody.status === 'done') {
+        result = startBody;
+      } else {
+        showElapsed();
+        pollTimer = setInterval(showElapsed, 1000);
+        while (true) {
+          await new Promise(r => setTimeout(r, 2500));
+          const pollResp = await fetch(`${API_BASE}reports/${meta.report_id}/insights/status`, { headers: authHeaders() });
+          if (pollResp.status === 401) { showLoginGate(); throw new Error('请先登录 / Please log in'); }
+          const pollBody = await parseJsonResponse(pollResp);
+          if (!pollResp.ok) throw new Error(pollBody.detail || 'Status check failed');
+          if (pollBody.status === 'done') { result = pollBody; break; }
+          if (pollBody.status === 'error') throw new Error(pollBody.error || 'Generation failed');
+        }
+      }
+      out.innerHTML = renderMarkdownLite(result.insights);
+      status.textContent = `由 ${result.provider} 生成 · generated via ${result.provider}`;
     } catch (e) {
       status.textContent = '';
       out.innerHTML = `<div class="msg error">生成失败 / Generation failed: ${e.message}</div>`;
     } finally {
+      if (pollTimer) clearInterval(pollTimer);
       btn.disabled = false;
       out.style.opacity = '1';
     }
