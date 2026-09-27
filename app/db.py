@@ -30,6 +30,10 @@ def init_db():
             conn.execute("ALTER TABLE reports ADD COLUMN author TEXT NOT NULL DEFAULT ''")
         if not _column_exists(conn, "reports", "granularity"):
             conn.execute("ALTER TABLE reports ADD COLUMN granularity TEXT NOT NULL DEFAULT 'day'")
+        if not _column_exists(conn, "reports", "insights"):
+            conn.execute("ALTER TABLE reports ADD COLUMN insights TEXT")
+        if not _column_exists(conn, "reports", "insights_provider"):
+            conn.execute("ALTER TABLE reports ADD COLUMN insights_provider TEXT")
 
         conn.execute("""
             CREATE TABLE IF NOT EXISTS users (
@@ -96,6 +100,13 @@ def get_report(report_id: int) -> dict | None:
         d["data"] = json.loads(d.pop("data_json"))
         d["warnings"] = json.loads(d.pop("warnings_json"))
         return d
+
+
+def save_insights(report_id: int, text: str, provider: str) -> None:
+    with get_conn() as conn:
+        conn.execute("UPDATE reports SET insights = ?, insights_provider = ? WHERE id = ?",
+                     (text, provider, report_id))
+        conn.commit()
 
 
 def delete_report(report_id: int) -> bool:
