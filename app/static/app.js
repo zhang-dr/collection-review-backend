@@ -38,15 +38,17 @@ function showMsg(text, kind = "info") {
   if (kind !== "error") setTimeout(() => { box.innerHTML = ""; }, 6000);
 }
 
-/* ---------------- auth: administrator-provisioned accounts ----------------
-   Accounts are created only by the administrator. The token is kept
+/* ---------------- auth: lightweight username(+optional password) login ----------------
+   Not a real security system — see the copy on the login card. First login
+   for a given username creates the account with whatever password was
+   given; later logins with that username must match it. The token is kept
    in localStorage and sent as an Authorization: Bearer header on every
    API call that needs an identity (upload, history). */
 const AUTH_TOKEN_KEY = "crna_token";
 const AUTH_USER_KEY = "crna_username";
 let currentUser = null;
 let currentUserIsAdmin = false;
-let currentUserCanUseAi = false;
+let currentUserAiAllowed = false;
 
 function authHeaders() {
   const token = localStorage.getItem(AUTH_TOKEN_KEY);
@@ -60,7 +62,11 @@ function hideLoginGate() {
   document.getElementById("loginGate").style.display = "none";
   document.getElementById("userbar").hidden = false;
   document.getElementById("userbarName").textContent = currentUser || "";
-  document.getElementById("btn-manage-users").hidden = !currentUserIsAdmin;
+}
+// Shows/hides UI that depends on the logged-in account's role — the Admin
+// nav tab (admin only) — called after every login and on checkAuth().
+function applyUserPermissionsUI() {
+  document.getElementById("navAdminBtn").hidden = !currentUserIsAdmin;
 }
 async function checkAuth() {
   const token = localStorage.getItem(AUTH_TOKEN_KEY);
@@ -71,7 +77,8 @@ async function checkAuth() {
     const body = await resp.json();
     currentUser = body.username;
     currentUserIsAdmin = !!body.is_admin;
-    currentUserCanUseAi = !!body.can_use_ai;
+    currentUserAiAllowed = !!body.ai_allowed;
+    applyUserPermissionsUI();
     hideLoginGate();
   } catch (e) {
     localStorage.removeItem(AUTH_TOKEN_KEY);
@@ -95,88 +102,16 @@ document.getElementById("btn-login").addEventListener("click", async () => {
     localStorage.setItem(AUTH_TOKEN_KEY, body.token);
     localStorage.setItem(AUTH_USER_KEY, body.username);
     currentUser = body.username;
-    await checkAuth();
+    currentUserIsAdmin = !!body.is_admin;
+    currentUserAiAllowed = !!body.ai_allowed;
+    applyUserPermissionsUI();
+    hideLoginGate();
   } catch (e) {
     errBox.textContent = "登录失败 / " + e.message;
     errBox.style.display = "block";
   }
 });
 document.getElementById("f-login-pass").addEventListener("keydown", e => { if (e.key === "Enter") document.getElementById("btn-login").click(); });
-
-document.getElementById("btn-manage-users").addEventListener("click", () => {
-  document.getElementById("f-new-user").value = "";
-  document.getElementById("f-new-pass").value = "";
-  document.getElementById("userModalMsg").style.display = "none";
-  document.getElementById("userModal").hidden = false;
-  loadUserAccess();
-  loadAiSettings();
-});
-
-async function loadUserAccess() {
-  const wrap = document.getElementById("userAccessList");
-  wrap.innerHTML = '<span class="na">加载账号… Loading accounts…</span>';
-  try {
-    const resp = await fetch(API_BASE + "admin/users", { headers: authHeaders() });
-    const users = await resp.json();
-    if (!resp.ok) throw new Error(users.detail || "Could not load accounts");
-    wrap.innerHTML = '<div style="font-size:12px;font-weight:700;margin-bottom:8px;">AI 使用权限 <span class="cn">AI access</span></div>';
-    users.forEach(u => {
-      const row = document.createElement("label");
-      row.style.cssText = "display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-top:1px solid var(--line);font-size:12px;";
-      row.innerHTML = `<span>${u.username}${u.is_admin ? '（管理员）' : ''}</span><input type="checkbox" ${u.can_use_ai ? 'checked' : ''} ${u.is_admin ? 'disabled' : ''}>`;
-      const box = row.querySelector("input");
-      box.addEventListener("change", async () => {
-        const fd = new FormData(); fd.append("allowed", box.checked ? "true" : "false");
-        const save = await fetch(`${API_BASE}admin/users/${u.id}/ai-access`, { method: "POST", headers: authHeaders(), body: fd });
-        if (!save.ok) { box.checked = !box.checked; const body = await save.json(); showMsg(body.detail || "更新失败", "error"); }
-      });
-      wrap.appendChild(row);
-    });
-  } catch (e) { wrap.innerHTML = `<div class="msg error">读取账号失败 / ${e.message}</div>`; }
-}
-
-async function loadAiSettings() {
-  const status = document.getElementById("aiSettingsStatus");
-  try {
-    const resp = await fetch(API_BASE + "admin/ai-settings", { headers: authHeaders() });
-    const body = await resp.json();
-    if (!resp.ok) throw new Error(body.detail || "Could not load AI settings");
-    document.getElementById("f-ai-provider").value = body.default || "openai";
-    const configured = Object.entries(body.providers || {}).filter(([, v]) => v.configured).map(([, v]) => v.label);
-    status.textContent = configured.length ? `已配置 / Configured: ${configured.join(", ")}` : "尚未配置 AI 服务 / No AI provider configured";
-  } catch (e) { status.textContent = "读取配置失败 / " + e.message; }
-}
-document.getElementById("btn-ai-save").addEventListener("click", async () => {
-  const provider = document.getElementById("f-ai-provider").value;
-  const apiKey = document.getElementById("f-ai-key").value.trim();
-  const model = document.getElementById("f-ai-model").value.trim();
-  const status = document.getElementById("aiSettingsStatus");
-  if (!apiKey) { status.textContent = "请输入新的 API 密钥 / Enter a new API key"; return; }
-  const fd = new FormData(); fd.append("provider", provider); fd.append("api_key", apiKey); fd.append("model", model);
-  try {
-    const resp = await fetch(API_BASE + "admin/ai-settings", { method: "POST", headers: authHeaders(), body: fd });
-    const body = await resp.json();
-    if (!resp.ok) throw new Error(body.detail || "Could not save settings");
-    document.getElementById("f-ai-key").value = "";
-    status.textContent = `${provider} 已配置 / configured`;
-  } catch (e) { status.textContent = "保存失败 / " + e.message; }
-});
-document.getElementById("btn-user-cancel").addEventListener("click", () => { document.getElementById("userModal").hidden = true; });
-document.getElementById("btn-user-create").addEventListener("click", async () => {
-  const username = document.getElementById("f-new-user").value.trim();
-  const password = document.getElementById("f-new-pass").value;
-  const msg = document.getElementById("userModalMsg");
-  msg.style.display = "none";
-  if (!username || !password) { msg.className = "msg error"; msg.textContent = "请输入用户名和密码 / Username and password are required"; msg.style.display = "block"; return; }
-  const fd = new FormData(); fd.append("username", username); fd.append("password", password);
-  try {
-    const resp = await fetch(API_BASE + "auth/users", { method: "POST", headers: authHeaders(), body: fd });
-    const body = await resp.json();
-    if (!resp.ok) throw new Error(body.detail || "Account creation failed");
-    msg.className = "msg ok"; msg.textContent = `账号 ${body.username} 已创建 / Account created`; msg.style.display = "block";
-    document.getElementById("f-new-user").value = ""; document.getElementById("f-new-pass").value = "";
-  } catch (e) { msg.className = "msg error"; msg.textContent = "创建失败 / " + e.message; msg.style.display = "block"; }
-});
 
 /* ---------------- generic confirm modal (Promise-based) ---------------- */
 function showConfirm(titleHtml, bodyHtml, okLabel = "继续 Continue") {
@@ -198,8 +133,6 @@ document.getElementById("btn-logout").addEventListener("click", async () => {
   localStorage.removeItem(AUTH_TOKEN_KEY);
   localStorage.removeItem(AUTH_USER_KEY);
   currentUser = null;
-  currentUserIsAdmin = false;
-  currentUserCanUseAi = false;
   showLoginGate();
 });
 checkAuth();
@@ -212,7 +145,109 @@ function switchView(view) {
   document.querySelectorAll("nav.tabs button").forEach(b => b.classList.toggle("active", b.dataset.view === view));
   document.querySelectorAll(".view").forEach(v => v.classList.toggle("active", v.id === "view-" + view));
   if (view === "history") loadHistory();
+  if (view === "admin") { loadAdminUsers(); loadAiSettings(); }
 }
+
+/* ---------------- admin panel: create accounts, grant/revoke AI access ----------------
+   Only reachable via the Admin nav tab, which applyUserPermissionsUI() keeps
+   hidden for everyone but the admin account — but the real gate is server
+   side (require_admin on every /api/admin/* route), this is just UI. */
+async function loadAdminUsers() {
+  const tbody = document.getElementById('adminUserTable');
+  tbody.innerHTML = '<tr><td colspan="4" class="na" style="text-align:center;">加载中… Loading…</td></tr>';
+  try {
+    const resp = await fetch(API_BASE + 'admin/users', { headers: authHeaders() });
+    if (resp.status === 401) { showLoginGate(); return; }
+    if (resp.status === 403) { tbody.innerHTML = '<tr><td colspan="4" class="na" style="text-align:center;">仅管理员可见 / Admins only</td></tr>'; return; }
+    const users = await resp.json();
+    tbody.innerHTML = '';
+    users.forEach(u => {
+      const row = document.createElement('tr');
+      const isAdminUser = !!u.is_admin || u.username === 'Xihao';
+      row.innerHTML = `
+        <td style="text-align:left;font-weight:600;">${u.username}</td>
+        <td style="text-align:left;">${isAdminUser ? '<span class="pos">✓ Admin</span>' : '<span class="na">—</span>'}</td>
+        <td style="text-align:left;"></td>
+        <td style="text-align:left;font-size:11px;color:var(--muted);">${u.created_at || ''}</td>
+      `;
+      const aiCell = row.children[2];
+      if (isAdminUser) {
+        aiCell.innerHTML = '<span class="pos">✓ 始终开启 always on</span>';
+      } else {
+        const label = document.createElement('label');
+        label.style.cssText = 'display:flex;align-items:center;gap:6px;font-weight:500;cursor:pointer;';
+        const cb = document.createElement('input');
+        cb.type = 'checkbox'; cb.checked = !!u.ai_allowed; cb.style.cssText = 'width:auto;margin:0;';
+        label.appendChild(cb);
+        label.appendChild(document.createTextNode(cb.checked ? '已开通 enabled' : '未开通 disabled'));
+        cb.addEventListener('change', async () => {
+          cb.disabled = true;
+          try {
+            const fd = new FormData(); fd.append('allowed', cb.checked ? 'true' : 'false');
+            const r = await fetch(`${API_BASE}admin/users/${encodeURIComponent(u.username)}/ai-access`, { method: 'POST', headers: authHeaders(), body: fd });
+            if (!r.ok) throw new Error((await r.json()).detail || 'Failed');
+            label.lastChild.textContent = cb.checked ? '已开通 enabled' : '未开通 disabled';
+          } catch (e) {
+            cb.checked = !cb.checked;
+            showMsg('设置失败 / Failed: ' + e.message, 'error');
+          } finally {
+            cb.disabled = false;
+          }
+        });
+        aiCell.appendChild(label);
+      }
+      tbody.appendChild(row);
+    });
+    if (!users.length) tbody.innerHTML = '<tr><td colspan="4" class="na" style="text-align:center;">没有账号 / No accounts</td></tr>';
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="4" class="na" style="text-align:center;">加载失败 / Failed to load: ${e.message}</td></tr>`;
+  }
+}
+document.getElementById('btn-admin-create').addEventListener('click', async () => {
+  const uEl = document.getElementById('f-admin-newuser'), pEl = document.getElementById('f-admin-newpass');
+  const msg = document.getElementById('adminCreateMsg');
+  const username = uEl.value.trim(), password = pEl.value;
+  msg.innerHTML = '';
+  if (!username || !password) { msg.innerHTML = '<div class="msg error">请输入用户名和密码 / Username and password are required</div>'; return; }
+  try {
+    const fd = new FormData(); fd.append('username', username); fd.append('password', password);
+    const resp = await fetch(API_BASE + 'admin/users', { method: 'POST', headers: authHeaders(), body: fd });
+    const body = await resp.json();
+    if (!resp.ok) throw new Error(body.detail || 'Failed');
+    msg.innerHTML = `<div class="msg ok">账号 ${body.username} 创建成功 / Account ${body.username} created.</div>`;
+    uEl.value = ''; pEl.value = '';
+    loadAdminUsers();
+  } catch (e) {
+    msg.innerHTML = `<div class="msg error">创建失败 / Failed: ${e.message}</div>`;
+  }
+});
+
+async function loadAiSettings() {
+  const status = document.getElementById('aiSettingsStatus');
+  try {
+    const resp = await fetch(API_BASE + 'admin/ai-settings', { headers: authHeaders() });
+    const body = await resp.json();
+    if (!resp.ok) throw new Error(body.detail || 'Could not load AI settings');
+    document.getElementById('f-ai-provider').value = body.default || 'openai';
+    const configured = Object.entries(body.providers || {}).filter(([, v]) => v.configured).map(([, v]) => v.label);
+    status.textContent = configured.length ? `已配置 / Configured: ${configured.join(', ')}` : '尚未配置 AI 服务 / No AI provider configured';
+  } catch (e) { status.textContent = '读取配置失败 / ' + e.message; }
+}
+document.getElementById('btn-ai-save').addEventListener('click', async () => {
+  const provider = document.getElementById('f-ai-provider').value;
+  const apiKey = document.getElementById('f-ai-key').value.trim();
+  const model = document.getElementById('f-ai-model').value.trim();
+  const status = document.getElementById('aiSettingsStatus');
+  if (!apiKey) { status.textContent = '请输入新的 API 密钥 / Enter a new API key'; return; }
+  const fd = new FormData(); fd.append('provider', provider); fd.append('api_key', apiKey); fd.append('model', model);
+  try {
+    const resp = await fetch(API_BASE + 'admin/ai-settings', { method: 'POST', headers: authHeaders(), body: fd });
+    const body = await resp.json();
+    if (!resp.ok) throw new Error(body.detail || 'Could not save settings');
+    document.getElementById('f-ai-key').value = '';
+    status.textContent = `${provider} 已配置 / configured`;
+  } catch (e) { status.textContent = '保存失败 / ' + e.message; }
+});
 
 /* ---------------- drag & drop for file inputs ----------------
    The clickable/droppable surface is the whole .filepick-visual card:
@@ -285,7 +320,7 @@ DEPOTS.forEach(depot => {
 });
 
 /* ---------------- comparison granularity (day / week / month) ---------------- */
-const GRAN_LABEL = { day: { en: "Day vs day", cn: "日对比" }, week: { en: "Week vs week", cn: "周对比" }, month: { en: "Month vs month", cn: "月对比" } };
+const GRAN_LABEL = { day: { en: "Day vs day", cn: "日对比" }, week: { en: "Week vs week", cn: "周对比" }, month: { en: "Month vs month", cn: "月对比" }, custom: { en: "Custom date range", cn: "自定义对比" } };
 let granState = "day";
 function setGranularity(g) {
   granState = g;
@@ -767,12 +802,34 @@ function renderMultiLine(container, series, xLabels) {
   container.appendChild(wrap);
 }
 
+// A depot counts as "in this report" if it operated at least one of the
+// two periods (S[d].active_a || active_b). A depot with zero data across
+// BOTH periods (never uploaded, or a depot this network doesn't run at all
+// for the date range picked) is dropped from every chart/table entirely,
+// rather than showing a row of N/A that just clutters a report that may
+// now genuinely be single- or dual-depot. A depot inactive in only ONE of
+// the two periods still shows (it's relevant to the comparison) — that
+// case is the "未运营 Not operating" badge in the 01 table, unchanged.
+function getActiveDepots(D) {
+  return DEPOTS.filter(d => D.summary[d] && (D.summary[d].active_a || D.summary[d].active_b));
+}
+
+// Plain-language calc/source notes shown on hover over each KPI tile —
+// answers "how is this computed" without cluttering the tile itself.
+const KPI_CALC = {
+  pickup: 'OPC-corrected actual pickup, summed across active depots (falls back to route-level actual pickup for any depot/date with no OPC entered). <br>各仓OPC修正后实际揽收量之和（未填OPC的仓/期，用路线级实际揽收合计代替）。',
+  cpp: 'Network total billed cost ÷ network actual pickup, each period. N/A if no billing was uploaded that period. <br>全网账单总成本 ÷ 全网实际揽收量。该期未上传账单则为N/A。',
+  fcstdev: '(Actual − Forecast) / Forecast, network-wide, each period. <br>(实际揽收 − 预测量) / 预测量，全网口径。',
+  routes: 'Count of distinct routes across active depots (route-info row count — not "routes with a matched billing cost"). <br>各活跃仓的路线条数之和（按route-info行数计，非"有账单匹配"的路线数）。',
+  ppr: 'Network actual pickup ÷ total routes, each period. <br>全网实际揽收量 ÷ 总路线数。',
+  jobeff: 'Network Σ(route actual pickup) ÷ Σ(route actual duration in hours) — a pickup-weighted average across every route, not a simple average of per-route rates. <br>全网Σ(路线实际揽收量) ÷ Σ(路线实际时长/小时) —— 按揽收量加权的平均效率，不是逐路线效率的简单平均。',
+};
+
 /* ============================================================
    REPORT RENDERING — builds the report from a fetched JSON `D`
    ============================================================ */
 function renderReport(D, meta = {}) {
-  // Reports saved before v3 do not contain the newer analysis sections.
-  // Default them here so historical reports remain viewable after upgrades.
+  // Historical reports predate these sections; default them for compatibility.
   D.vehicle_mix = Array.isArray(D.vehicle_mix) ? D.vehicle_mix : [];
   D.duration_buckets = D.duration_buckets || {};
   D.bscan_candidates = Array.isArray(D.bscan_candidates) ? D.bscan_candidates : [];
@@ -783,26 +840,32 @@ function renderReport(D, meta = {}) {
   root.innerHTML = buildReportSkeleton(D, meta);
 
   const S = D.summary, NET = D.net, FORECAST = D.forecast;
+  const activeDepots = getActiveDepots(D);
   const gapNet14 = pctChange(NET.act14, NET.f14), gapNet21 = pctChange(NET.act21, NET.f21);
 
   /* ---- KPI row ---- */
   const kpis = [
-    { en: 'Network Actual Pickup — ' + D.date_b_label, cn: '全网实际揽收量', val: fmt(NET.act21) + ' pcs' },
-    { en: '£/Parcel WoW', cn: '单票成本环比', val: gbp(NET.cpp14) + ' → ' + gbp(NET.cpp21) },
-    { en: 'Forecast Deviation WoW', cn: '预测偏差环比', val: pct(gapNet14) + ' → ' + pct(gapNet21) },
-    { en: 'Total Routes WoW', cn: '总路线数环比', val: NET.routes14 + ' → ' + NET.routes21 },
-    { en: 'Parcels / Route WoW', cn: '单路线产出环比', val: fmt(NET.ppr14) + ' → ' + fmt(NET.ppr21) },
-    { en: 'Job Efficiency WoW', cn: 'Job效率环比 (pcs/hr)', val: fmt(NET.job_eff14, 1) + ' → ' + fmt(NET.job_eff21, 1) },
+    { en: 'Network Actual Pickup — ' + D.date_b_label, cn: '全网实际揽收量', val: fmt(NET.act21) + ' pcs', calc: KPI_CALC.pickup },
+    { en: '£/Parcel WoW', cn: '单票成本环比', val: gbp(NET.cpp14) + ' → ' + gbp(NET.cpp21), calc: KPI_CALC.cpp },
+    { en: 'Forecast Deviation WoW', cn: '预测偏差环比', val: pct(gapNet14) + ' → ' + pct(gapNet21), calc: KPI_CALC.fcstdev },
+    { en: 'Total Routes WoW', cn: '总路线数环比', val: NET.routes14 + ' → ' + NET.routes21, calc: KPI_CALC.routes },
+    { en: 'Parcels / Route WoW', cn: '单路线产出环比', val: fmt(NET.ppr14) + ' → ' + fmt(NET.ppr21), calc: KPI_CALC.ppr },
+    { en: 'Job Efficiency WoW', cn: 'Job效率环比 (pcs/hr)', val: fmt(NET.job_eff14, 1) + ' → ' + fmt(NET.job_eff21, 1), calc: KPI_CALC.jobeff },
   ];
   const kpiRow = document.getElementById('kpiRow');
-  kpis.forEach(k => { kpiRow.innerHTML += `<div class="kpi"><div class="lbl">${k.en}<span class="cn">${k.cn}</span></div><div class="val tabular">${k.val}</div></div>`; });
+  kpis.forEach(k => {
+    const tile = elt('div', 'kpi', `<div class="lbl">${k.en}<span class="cn">${k.cn}</span></div><div class="val tabular">${k.val}</div>`);
+    tile.style.cursor = 'help';
+    attachTooltip(tile, `<b>${k.en} 计算方式 / How it's calculated</b><br>${k.calc}`);
+    kpiRow.appendChild(tile);
+  });
 
   /* ---- overview mini charts ---- */
   renderVBar(document.getElementById('cOverviewBar'),
-    DEPOTS.map(d => ({ label: BI[d].en, a: { v: S[d].act14, color: 'var(--line)' }, b: { v: S[d].act21, color: COLOR[d] } })),
+    activeDepots.map(d => ({ label: BI[d].en, a: { v: S[d].act14, color: 'var(--line)' }, b: { v: S[d].act21, color: COLOR[d] } })),
     [{ label: D.date_a_label, color: 'var(--line)' }, { label: D.date_b_label, color: 'var(--ink-soft)' }]);
   renderMultiLine(document.getElementById('cOverviewLine'), [{ label: 'Network', color: 'var(--accent)', points: [NET.cpp14, NET.cpp21] }], [D.date_a_label, D.date_b_label]);
-  renderDonut(document.getElementById('cOverviewPie'), DEPOTS.map(d => ({ label: BI[d].en, color: COLOR[d], value: S[d].routes21 })));
+  renderDonut(document.getElementById('cOverviewPie'), activeDepots.map(d => ({ label: BI[d].en, color: COLOR[d], value: S[d].routes21 })));
 
   /* ---- 01 review table ---- */
   const reviewTable = document.getElementById('reviewTable');
@@ -814,7 +877,7 @@ function renderReport(D, meta = {}) {
   const inactiveBadge = '<span class="badge-inactive">未运营 Not operating</span>';
   const fallbackBadge = (src, label) => src === 'fallback'
     ? `<span class="badge-fallback" title="没有手动填写OPC，已用路线级实际揽收合计代替 / No manual OPC entered — using route-level actual pickup instead">${label}回退 fallback</span>` : '';
-  DEPOTS.forEach(d => {
+  activeDepots.forEach(d => {
     const s = S[d];
     const dRoutes = pctChange(s.routes21, s.routes14), dAct = pctChange(s.act21, s.act14), dCpp = pctChange(s.cpp21, s.cpp14);
     const gap14 = pctChange(s.act14, s.f14), gap21 = pctChange(s.act21, s.f21);
@@ -836,7 +899,7 @@ function renderReport(D, meta = {}) {
     </tr>`;
   });
   const netDAct = pctChange(NET.act21, NET.act14), netDCpp = pctChange(NET.cpp21, NET.cpp14), netDRoutes = pctChange(NET.routes21, NET.routes14);
-  const totCancel14 = DEPOTS.reduce((a, d) => a + S[d].x14, 0), totCancel21 = DEPOTS.reduce((a, d) => a + S[d].x21, 0);
+  const totCancel14 = activeDepots.reduce((a, d) => a + S[d].x14, 0), totCancel21 = activeDepots.reduce((a, d) => a + S[d].x21, 0);
   reviewTable.innerHTML += `<tr class="totalrow">
     <td style="text-align:left;">Network<span class="cn" style="display:block;">全网</span></td>
     <td class="tabular">${NET.routes14} → ${NET.routes21}</td><td class="tabular neg">${pct(netDRoutes)}</td>
@@ -849,12 +912,12 @@ function renderReport(D, meta = {}) {
 
   /* ---- 02 forecast ---- */
   renderHGroupedBar(document.getElementById('cForecast'),
-    DEPOTS.flatMap(d => [
+    activeDepots.flatMap(d => [
       { label: BI[d].en + ' ' + D.date_a_label, a: { v: FORECAST[d].f14, color: 'var(--line)' }, b: { v: FORECAST[d].a14, color: COLOR[d] } },
       { label: BI[d].en + ' ' + D.date_b_label, a: { v: FORECAST[d].f21, color: 'var(--line)' }, b: { v: FORECAST[d].a21, color: COLOR[d] } },
     ]), [{ label: 'Forecast', color: 'var(--line)' }, { label: 'Actual', color: 'var(--accent)' }]);
   const forecastTable = document.getElementById('forecastTable');
-  DEPOTS.forEach(d => {
+  activeDepots.forEach(d => {
     const f = FORECAST[d]; const g14 = (f.a14 / f.f14 - 1) * 100, g21 = (f.a21 / f.f21 - 1) * 100;
     forecastTable.innerHTML += `<tr><td style="text-align:left;">${tagHtml(d)}</td><td class="tabular">${fmt(f.f14)}</td><td class="tabular">${fmt(f.a14)}</td><td class="tabular ${g14 >= 0 ? 'pos' : 'neg'}">${pct(g14)}</td><td class="tabular">${fmt(f.f21)}</td><td class="tabular">${fmt(f.a21)}</td><td class="tabular ${g21 >= 0 ? 'pos' : 'neg'}">${pct(g21)}</td></tr>`;
   });
@@ -869,7 +932,7 @@ function renderReport(D, meta = {}) {
     [{ label: D.date_a_label, segs: reasonKeys.map(k => ({ key: k, val: D.reasons_a[k] || 0 })) },
     { label: D.date_b_label, segs: reasonKeys.map(k => ({ key: k, val: D.reasons_b[k] || 0 })) }], reasonMeta, reasonMax, false);
   renderVBar(document.getElementById('cCancelSite'),
-    DEPOTS.map(d => ({ label: BI[d].en, a: { v: D.cancel_site_a[d] || 0, color: 'var(--line)' }, b: { v: D.cancel_site_b[d] || 0, color: COLOR[d] } })),
+    activeDepots.map(d => ({ label: BI[d].en, a: { v: D.cancel_site_a[d] || 0, color: 'var(--line)' }, b: { v: D.cancel_site_b[d] || 0, color: COLOR[d] } })),
     [{ label: D.date_a_label, color: 'var(--line)' }, { label: D.date_b_label, color: 'var(--ink-soft)' }]);
   const merchantTable = document.getElementById('merchantTable');
   if (D.merchants.length === 0) { merchantTable.innerHTML = `<tr><td colspan="6" class="na" style="text-align:center;">没有单日取消≥2次的商家 / none</td></tr>`; }
@@ -904,7 +967,7 @@ function renderReport(D, meta = {}) {
 
   const bucketMeta = {};
   DURATION_BUCKETS.forEach((b, i) => { bucketMeta[b] = { label: b, color: QUAL_COLORS[i % QUAL_COLORS.length] }; });
-  const durGroupKeys = [...DEPOTS, 'Network'];
+  const durGroupKeys = [...activeDepots, 'Network'];
   const durRows = [];
   durGroupKeys.forEach(dep => {
     const db = D.duration_buckets[dep];
@@ -921,31 +984,28 @@ function renderReport(D, meta = {}) {
     if (!db) return;
     const labelHtml = dep === 'Network' ? 'Network<span class="cn" style="display:block;">全网</span>' : tagHtml(dep);
     db.rows.forEach((r, i) => {
+      const rcp = r.cpp_pct;
       durationTable.innerHTML += `<tr>
         ${i === 0 ? `<td rowspan="${db.rows.length}" style="text-align:left;vertical-align:top;">${labelHtml}</td>` : ''}
         <td style="text-align:left;"><span class="sw" style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${bucketMeta[r.bucket].color};margin-right:6px;"></span>${r.bucket}</td>
         <td class="tabular">${r.n_a} → ${r.n_b}</td>
         <td class="tabular">${r.share_a.toFixed(1)}% → ${r.share_b.toFixed(1)}%</td>
         <td class="tabular">${ppfmt(r.share_pp)}</td>
+        <td class="tabular">${gbp(r.cpp_a)} → ${gbp(r.cpp_b)}</td>
+        <td class="tabular ${rcp == null ? '' : (rcp <= 0 ? 'pos' : 'neg')}">${rcp == null ? '<span class="na">N/A</span>' : pct(rcp)}</td>
       </tr>`;
     });
   });
 
-  /* ---- 05 cost ---- */
-  (function renderCostVol() {
-    const container = document.getElementById('cCostVol');
-    container.innerHTML = '';
-    container.style.display = 'flex'; container.style.flexDirection = 'column'; container.style.height = '100%';
-    const totalH = container.clientHeight || 320;
-    const bottomH = Math.round(totalH * 0.40);
-    const topH = totalH - bottomH - 15;
-    const top = elt('div'); top.style.flex = '0 0 auto'; top.style.height = topH + 'px'; top.style.overflow = 'hidden';
-    const bottom = elt('div'); bottom.style.flex = '0 0 auto'; bottom.style.height = bottomH + 'px'; bottom.style.overflow = 'hidden';
-    bottom.style.marginTop = '10px'; bottom.style.borderTop = '1px dashed var(--line)'; bottom.style.paddingTop = '5px';
-    container.appendChild(top); container.appendChild(bottom);
-    renderVBar(top, DEPOTS.map(d => ({ label: BI[d].en, a: { v: S[d].act14, color: 'var(--line)' }, b: { v: S[d].act21, color: COLOR[d] } })), [{ label: 'Actual pickup', color: COLOR.Manchester }]);
-    renderMultiLine(bottom, DEPOTS.map(d => ({ label: BI[d].en, color: COLOR[d], points: [S[d].cpp14, S[d].cpp21] })), [D.date_a_label, D.date_b_label]);
-  })();
+  /* ---- 05 cost ----
+     Was one 320px box manually split into a bar chart on top of a line
+     chart — cramped once there are 3 depots × 2 dates in each. Now each
+     gets its own full-height chartbox instead. */
+  renderVBar(document.getElementById('cCostPickup'),
+    activeDepots.map(d => ({ label: BI[d].en, a: { v: S[d].act14, color: 'var(--line)' }, b: { v: S[d].act21, color: COLOR[d] } })),
+    [{ label: D.date_a_label, color: 'var(--line)' }, { label: D.date_b_label, color: 'var(--ink-soft)' }]);
+  renderMultiLine(document.getElementById('cCostTrend'),
+    activeDepots.map(d => ({ label: BI[d].en, color: COLOR[d], points: [S[d].cpp14, S[d].cpp21] })), [D.date_a_label, D.date_b_label]);
 
   const netSummaryTable = document.getElementById('netSummaryTable');
   const netRows = [
@@ -1094,6 +1154,23 @@ async function initInsightsPanel(meta) {
   const status = document.getElementById('insightsStatus');
   const out = document.getElementById('insightsOutput');
 
+  // Unauthorized accounts can still see a previously-cached narrative (in
+  // case access was granted, used, then later revoked) but don't get the
+  // generate controls — the server enforces this too (403 on
+  // /api/reports/{id}/insights), this just avoids showing controls that
+  // would only fail, or spending a roundtrip on the providers endpoint.
+  if (!currentUserAiAllowed) {
+    document.querySelector('#insightsPanel .insights-controls').style.display = 'none';
+    if (meta.cachedInsights) {
+      out.innerHTML = renderMarkdownLite(meta.cachedInsights) +
+        `<p class="na" style="margin-top:10px;border-top:1px solid var(--line);padding-top:10px;">此账号未获得AI功能授权，无法重新生成。<span style="display:block;">This account isn't authorized to regenerate AI insights.</span></p>`;
+    } else {
+      out.innerHTML = `<p class="na">此账号未获得AI功能授权，如需使用请联系管理员 Xihao 开通。<span style="display:block;">This account isn't authorized to use AI insights yet — ask admin Xihao to enable it.</span></p>`;
+    }
+    return;
+  }
+  document.querySelector('#insightsPanel .insights-controls').style.display = 'flex';
+
   let providersInfo = null;
   try {
     const resp = await fetch(API_BASE + 'insights/providers', { headers: authHeaders() });
@@ -1122,23 +1199,19 @@ async function initInsightsPanel(meta) {
     status.textContent = '';
   }
 
-  if (!currentUserCanUseAi) {
-    btn.disabled = true;
-    sel.disabled = true;
-    status.textContent = '此账号未开通AI权限 / AI access is not enabled for this account';
-  }
-
   btn.onclick = async () => {
-    if (!currentUserCanUseAi) return;
-    const provider = sel.value;
+    // Admin knows the drill; every other authorized user gets a plain
+    // cost/accuracy disclaimer before each generate, since it calls a
+    // paid external API and the output can contain mistakes.
     if (!currentUserIsAdmin) {
-      const confirmed = await showConfirm(
-        'AI 洞察费用提示 <span class="cn">AI usage notice</span>',
-        'AI洞察会产生相关费用，请检查数据准确后再使用，避免浪费。<span class="cn" style="display:block;margin-top:6px;">AI insights incur usage costs. Please verify the data before continuing to avoid unnecessary spend.</span>',
-        '确认生成 Generate'
+      const ok = await showConfirm(
+        '生成前确认 <span class="cn" style="font-weight:400;color:var(--muted);">Before you generate</span>',
+        '本次操作会调用外部AI服务，可能产生费用；AI生成的内容可能包含错误，关键数字请以上方图表/表格为准，自行核实后再使用。<br><br>是否继续？' +
+        '<span style="display:block;margin-top:10px;">This calls an external AI service and may incur cost. Its output can contain mistakes — verify key figures against the charts/tables above before relying on them.<br><br>Continue?</span>'
       );
-      if (!confirmed) return;
+      if (!ok) return;
     }
+    const provider = sel.value;
     btn.disabled = true;
     status.textContent = '生成中…可能需要几十秒 Generating… may take up to a minute';
     out.style.opacity = '0.5';
@@ -1162,6 +1235,18 @@ async function initInsightsPanel(meta) {
 
 function buildReportSkeleton(D, meta = {}) {
   const granInfo = GRAN_LABEL[meta.granularity] || null;
+  // Depot-scope note for the top panel: names which depots are actually
+  // covered — when one is missing data across BOTH periods this report is
+  // effectively a dual-/single-depot analysis, not "all 3 depots", and the
+  // rest of the report (charts/tables) only shows those active depots.
+  const activeD = getActiveDepots(D);
+  const excludedD = DEPOTS.filter(d => !activeD.includes(d));
+  const depotWord = activeD.length === DEPOTS.length ? 'all 3 depots' : `${activeD.length} of ${DEPOTS.length} depots (${activeD.map(d => BI[d].en).join(', ')})`;
+  const depotWordCn = activeD.length === DEPOTS.length ? '全部3个仓' : `${activeD.length}/${DEPOTS.length}个仓（${activeD.map(d => BI[d].cn).join('、')}）`;
+  const depotScopeNote = {
+    en: depotWord + (excludedD.length ? ` — ${excludedD.map(d => BI[d].en).join(', ')} excluded, no data either period` : ''),
+    cn: depotWordCn + (excludedD.length ? `——${excludedD.map(d => BI[d].cn).join('、')}两期均无数据，已排除。` : '。'),
+  };
   const metaLine = (meta.author || granInfo) ? `
   <p style="font-size:11.5px;color:var(--muted);margin:0 0 16px;display:flex;flex-wrap:wrap;gap:14px;">
     ${meta.name ? `<span>${meta.name}</span>` : ''}
@@ -1184,8 +1269,8 @@ function buildReportSkeleton(D, meta = {}) {
   <div id="warnNote" class="msg error" style="display:none;"></div>
 
   <div class="panel">
-    <p style="margin:0 0 10px;">Data: ${D.date_a_label} → ${D.date_b_label}, all 3 depots. Route-level "actual" uses each system's own Actual Total Pickup (AB-scan overrides applied where entered); depot/network headline actual uses OPC.
-    <span class="cn" style="display:block;margin-top:4px;color:var(--muted);">路线级"实际揽收"使用各系统自身记录（已应用输入的AB scan修正）；仓/全网头部KPI使用OPC修正值。</span></p>
+    <p style="margin:0 0 10px;">Data: ${D.date_a_label} → ${D.date_b_label}, ${depotScopeNote.en}. Route-level "actual" uses each system's own Actual Total Pickup (AB-scan overrides applied where entered); depot/network headline actual uses OPC.
+    <span class="cn" style="display:block;margin-top:4px;color:var(--muted);">${depotScopeNote.cn}路线级"实际揽收"使用各系统自身记录（已应用输入的AB scan修正）；仓/全网头部KPI使用OPC修正值。</span></p>
     <div class="grid3">
       <div class="panel" style="margin-bottom:0;"><h3>Actual pickup by depot<span class="cn">各仓实际揽收量</span></h3><div class="chartbox mini"><div id="cOverviewBar" style="height:100%;"></div></div></div>
       <div class="panel" style="margin-bottom:0;"><h3>Network £/parcel trend<span class="cn">全网单票成本趋势</span></h3><div class="chartbox mini"><div id="cOverviewLine" style="height:100%;"></div></div></div>
@@ -1256,15 +1341,18 @@ function buildReportSkeleton(D, meta = {}) {
         <th>Routes A→B<span class="cn">路线数</span></th>
         <th>Share A→B<span class="cn">占比</span></th>
         <th>Δ share<span class="cn">占比变化</span></th>
+        <th>£/parcel A→B<span class="cn">单票成本</span></th>
+        <th>Δ £/parcel<span class="cn">单票环比</span></th>
       </tr></thead><tbody id="durationTable"></tbody></table>
     </div>
   </div>
 
   <div class="panel">
     <h3>05 · Cost Analysis<span class="cn">成本分析</span></h3>
-    <div class="grid2">
-      <div><h4 style="font-size:12.5px;margin:0 0 8px;">Actual pickup vs £/parcel<span class="cn" style="display:block;color:var(--muted);font-weight:400;">揽收量 vs 单票成本</span></h4><div class="chartbox tall"><div id="cCostVol" style="height:100%;"></div></div></div>
-      <div class="tblwrap"><table><thead><tr><th style="text-align:left;">Metric</th><th>A</th><th>B</th><th>WoW</th></tr></thead><tbody id="netSummaryTable"></tbody></table></div>
+    <div class="grid3">
+      <div><h4 style="font-size:12.5px;margin:0 0 8px;">Actual pickup by depot<span class="cn" style="display:block;color:var(--muted);font-weight:400;">各仓实际揽收量</span></h4><div class="chartbox tall"><div id="cCostPickup" style="height:100%;"></div></div></div>
+      <div><h4 style="font-size:12.5px;margin:0 0 8px;">£/parcel trend by depot<span class="cn" style="display:block;color:var(--muted);font-weight:400;">各仓单票成本趋势</span></h4><div class="chartbox tall"><div id="cCostTrend" style="height:100%;"></div></div></div>
+      <div class="tblwrap"><h4 style="font-size:12.5px;margin:0 0 8px;">Network summary<span class="cn" style="display:block;color:var(--muted);font-weight:400;">全网汇总</span></h4><table><thead><tr><th style="text-align:left;">Metric</th><th>A</th><th>B</th><th>WoW</th></tr></thead><tbody id="netSummaryTable"></tbody></table></div>
     </div>
     <h4 style="font-size:12.5px;margin:20px 0 8px;">£/parcel by route (date B), low → high<span class="cn" style="display:block;color:var(--muted);font-weight:400;">路线单票价格，从低到高（较晚日期）</span></h4>
     <div class="chartbox xtall"><div id="cPricePerParcel" style="height:100%;"></div></div>
