@@ -44,6 +44,8 @@ def init_db():
                 created_at TEXT NOT NULL DEFAULT (datetime('now'))
             )
         """)
+        if not _column_exists(conn, "users", "can_use_ai"):
+            conn.execute("ALTER TABLE users ADD COLUMN can_use_ai INTEGER NOT NULL DEFAULT 0")
         conn.execute("""
             CREATE TABLE IF NOT EXISTS sessions (
                 token TEXT PRIMARY KEY,
@@ -148,7 +150,21 @@ def create_user(username: str, password_salt: str, password_hash: str) -> dict:
         )
         conn.commit()
         return {"id": cur.lastrowid, "username": username,
-                "password_salt": password_salt, "password_hash": password_hash}
+                "password_salt": password_salt, "password_hash": password_hash,
+                "can_use_ai": 0}
+
+
+def list_users() -> list[dict]:
+    with get_conn() as conn:
+        rows = conn.execute("SELECT id, username, can_use_ai, created_at FROM users ORDER BY username COLLATE NOCASE").fetchall()
+        return [dict(r) for r in rows]
+
+
+def set_user_ai_access(user_id: int, allowed: bool) -> bool:
+    with get_conn() as conn:
+        cur = conn.execute("UPDATE users SET can_use_ai = ? WHERE id = ?", (1 if allowed else 0, user_id))
+        conn.commit()
+        return cur.rowcount > 0
 
 
 def create_session(user_id: int, token: str) -> None:
