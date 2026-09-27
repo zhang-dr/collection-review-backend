@@ -1,0 +1,9 @@
+# Drop this into the publish root of the Netlify site that serves
+# zhangxihao.com (or add the equivalent block to netlify.toml — see the
+# README's "Option C" section). Replace the target URL with your actual
+# Railway/Render/Fly.io backend URL once it's deployed.
+#
+# status 200 = transparent proxy (browser keeps showing
+# zhangxihao.com/CBTAnalysis/..., NOT a redirect to the backend's own domain).
+
+/CBTAnalysis/*  https://your-app.up.railway.app/:splat  200!

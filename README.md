@@ -13,8 +13,9 @@ given period is simply left blank and the report treats it as "not
 operating" rather than erroring. OPC-corrected actual pickup is optional
 too: leave it blank and the report falls back to that depot's route-level
 actual pickup total (flagged in the UI as a "fallback", not silently shown
-as OPC-confirmed). There's also an optional AI-generated narrative — see
-"AI-generated insights" below.
+as OPC-confirmed). There's also a one-click "export for AI analysis" button
+that packages the report's data for pasting into your own AI chat — see
+"Export for AI analysis" below.
 
 ## What's inside
 
@@ -22,16 +23,15 @@ as OPC-confirmed). There's also an optional AI-generated narrative — see
 backend/
   app/
     main.py       FastAPI app: /api/upload, /api/reports, /api/reports/{id},
-                   /api/auth/*, /api/insights/providers,
-                   /api/reports/{id}/insights
+                   /api/auth/*, /api/reports/{id}/insights/export
     pipeline.py    All the business logic (OPC/AB-scan handling, cost calcs,
                    forecast deviation, cancellation analysis, percentile-based
                    priority-route flagging, repeat-driver detection)
-    auth.py        Password login with administrator-only account creation
+    auth.py        Lightweight username(+optional password) login
     db.py          SQLite persistence (data/reports.db)
-    insights.py    Optional AI-generated narrative — the only part of the
-                   app that calls a third-party service (Claude / Gemini /
-                   ChatGPT), and only when a user clicks "Generate insights"
+    insights.py    Builds the paste-ready "export for AI analysis" text
+                   (methodology + distilled report data). This app never
+                   calls any third-party AI service itself.
     static/        Frontend — plain HTML/CSS/JS, zero build step, zero
                    external dependencies (all charts are native CSS/inline SVG)
   requirements.txt
@@ -93,6 +93,9 @@ already host things:
            proxy_set_header Host $host;
            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
            proxy_set_header X-Forwarded-Proto $scheme;
+           proxy_connect_timeout 120s;
+           proxy_send_timeout 120s;
+           proxy_read_timeout 120s;
        }
    }
    ```
@@ -146,6 +149,9 @@ location /CBTAnalysis/ {
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto $scheme;
     client_max_body_size 50m;
+    proxy_connect_timeout 120s;
+    proxy_send_timeout 120s;
+    proxy_read_timeout 120s;
 }
 ```
 
@@ -195,49 +201,46 @@ The app's own path-detection (`API_BASE` in `app.js`) and the `$PORT`
 handling in the `Dockerfile` mean nothing in the app itself needs to change
 for this path — only the platform account and the Netlify rewrite rule.
 
-## AI-generated insights (optional)
+## Export for AI analysis
 
-The report has an "AI 洞察 / AI-generated insights" panel that turns the
-computed numbers into a McKinsey-style narrative — headline-as-conclusion,
-bilingual, fact-based bullets citing the actual figures — instead of just
-charts and tables. It's entirely optional and strictly opt-in: nothing is
-sent anywhere until a user clicks "Generate insights" on a specific report,
-and the result is cached (`reports.insights` in the DB) so re-opening that
-report later doesn't spend another API call.
+The report has a "导出给AI分析 / Export for AI analysis" panel. Clicking the
+button doesn't call any AI service — this app never does. Instead it builds
+a single paste-ready text block combining the house methodology (Data →
+Insight → So what → Now what, bilingual, headline-as-conclusion) with a
+distilled version of that report's computed data, via
+`GET /api/reports/{id}/insights/export`. You copy that text (or download it
+as a `.txt` file) and paste it into your own AI chat — claude.ai, ChatGPT,
+or whatever you already have a subscription to — and it generates the
+narrative there, using your own account.
 
-Three providers are supported so you aren't locked into one vendor — pick
-whichever you already have an API key for. Each is enabled independently by
-setting its API-key environment variable on the server (Railway → your
-service → Variables, or the equivalent on whatever platform you used above);
-a provider with no key set simply shows as "未配置 / not configured" in the
-dropdown and can't be selected.
+This is deliberately simpler than calling a provider's API from the server:
+no API key to manage, no per-provider cost or rate limit to track, and no
+server-side timeout to work around (an earlier version of this app called
+providers' APIs directly and had to work around proxy timeouts like
+Netlify's 26-second limit — none of that applies once generation happens in
+your own AI chat instead of on this server). `app/insights.py` only builds
+the text; it makes no network calls itself.
 
-| Provider | API key env var | Model env var (optional) | Default model |
-|---|---|---|---|
-| Claude (Anthropic) | `ANTHROPIC_API_KEY` | `ANTHROPIC_MODEL` | `claude-sonnet-4-5` |
-| Gemini (Google) | `GEMINI_API_KEY` | `GEMINI_MODEL` | `gemini-2.5-flash` |
-| ChatGPT (OpenAI) | `OPENAI_API_KEY` | `OPENAI_MODEL` | `gpt-4o-mini` |
+## Accounts: admin-gated, with author-based delete permission
 
-You only need to set the key(s) for the provider(s) you actually want
-available — setting none just hides/disables the feature (the button still
-works, it returns a clear "not configured" error). Optionally set
-`AI_PROVIDER` (`claude` / `gemini` / `openai`) to change which provider is
-pre-selected in the dropdown; it defaults to `claude`.
+Login is no longer self-service. The hardcoded admin username (`Xihao`, set
+in `app/auth.py`'s `ADMIN_USERNAME`) is the only account that can create new
+accounts — it bootstraps itself on its first-ever login (there'd otherwise
+be no way to create the first account), and every other username must be
+created by the admin from the "管理 Admin" tab (visible only when logged in
+as the admin). The admin account always has admin rights regardless of
+what's in the database — that's enforced in code (`auth.is_admin`), not just
+a default value, so it can't accidentally be revoked by editing the DB.
 
-These are the only environment variables this app ever reads a secret from,
-and it never stores the key itself anywhere — each request reads it fresh
-from the environment and calls the provider's API directly over HTTPS
-(stdlib `urllib`, no extra pip dependency).
-
-## Before you expose this publicly: add access control
-
-Only accounts created by the configured administrator can log in. Authenticated
-users can upload data and read every saved report; report access is shared,
-not isolated per user. The built-in login is suitable for a trusted team but
-is not a complete enterprise identity system, so consider stronger controls
-once route-level commercial data (costs, driver names, merchant names) is on
-a public domain. Before putting it on your domain, also add access control
-at the reverse-proxy layer, e.g. nginx HTTP basic auth:
+Anyone who can log in can upload data and read every saved report. Deleting
+a report is restricted by authorship: the admin can delete any report from
+the "历史报告 / History" tab, while any other account can only delete
+reports it created itself (enforced server-side in `api_delete_report` in
+`app/main.py`, not just hidden in the UI — a non-owner's delete request gets
+a 403). This is still not a full permissions/roles system and not a real
+security boundary against someone who can already reach the URL. Before
+putting this on a public domain, also add access control at the
+reverse-proxy layer, e.g. nginx HTTP basic auth:
 
 ```nginx
 location / {
