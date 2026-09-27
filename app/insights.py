@@ -23,6 +23,8 @@ import os
 import urllib.error
 import urllib.request
 
+from . import db
+
 MAX_TOKENS = 3500
 
 
@@ -56,15 +58,25 @@ PROVIDER_CONFIG = {
 DEFAULT_PROVIDER = os.environ.get("AI_PROVIDER", "claude")
 
 
+def default_provider() -> str:
+    return db.get_setting("ai.default_provider") or DEFAULT_PROVIDER
+
+
+def _configured_value(provider: str, kind: str) -> str | None:
+    cfg = PROVIDER_CONFIG[provider]
+    env_name = cfg["key_env"] if kind == "api_key" else cfg["model_env"]
+    return os.environ.get(env_name) or db.get_setting(f"ai.{provider}.{kind}")
+
+
 def available_providers() -> dict:
     """{provider_key: {"label": ..., "configured": bool, "model": <effective model>}}"""
     out = {}
     for key, cfg in PROVIDER_CONFIG.items():
-        configured = bool(os.environ.get(cfg["key_env"]))
+        configured = bool(_configured_value(key, "api_key"))
         out[key] = {
             "label": cfg["label"],
             "configured": configured,
-            "model": os.environ.get(cfg["model_env"]) or cfg["default_model"],
+            "model": _configured_value(key, "model") or cfg["default_model"],
         }
     return out
 
@@ -219,18 +231,17 @@ _CALLERS = {"claude": _call_claude, "gemini": _call_gemini, "openai": _call_open
 
 
 def generate_insights(data: dict, provider: str | None = None, model: str | None = None) -> str:
-    provider = (provider or DEFAULT_PROVIDER or "claude").lower()
+    provider = (provider or default_provider() or "claude").lower()
     if provider not in PROVIDER_CONFIG:
         raise InsightsError(f"未知的AI提供方 '{provider}' / Unknown AI provider '{provider}'. "
                              f"Supported: {', '.join(PROVIDER_CONFIG)}")
     cfg = PROVIDER_CONFIG[provider]
-    api_key = os.environ.get(cfg["key_env"])
+    api_key = _configured_value(provider, "api_key")
     if not api_key:
         raise InsightsError(
-            f"{cfg['label']} 未配置 {cfg['key_env']} 环境变量，无法使用。"
-            f" / {cfg['key_env']} is not set on the server, so {cfg['label']} is unavailable."
+            f"{cfg['label']} 尚未配置API密钥。 / {cfg['label']} does not have an API key configured."
         )
-    use_model = model or os.environ.get(cfg["model_env"]) or cfg["default_model"]
+    use_model = model or _configured_value(provider, "model") or cfg["default_model"]
     user_content = json.dumps(_distill(data), ensure_ascii=False, default=str)
 
     text = _CALLERS[provider](api_key, use_model, user_content)
