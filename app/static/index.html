@@ -42,6 +42,18 @@ if (location.pathname !== "/" && !location.pathname.endsWith("/")) {
   </div>
 </div>
 
+<!-- ==================== GENERIC CONFIRM MODAL ==================== -->
+<div class="login-gate" id="confirmModal" hidden style="background:rgba(24,28,34,.55);">
+  <div class="login-card">
+    <h2 id="confirmTitle">确认 <span class="cn" style="font-weight:400;color:var(--muted);">Confirm</span></h2>
+    <div id="confirmBody" style="font-size:12.5px;color:var(--ink-soft);line-height:1.6;margin-bottom:18px;"></div>
+    <div style="display:flex;gap:10px;">
+      <button class="secondary" id="confirmCancel" type="button" style="flex:1;">取消 Cancel</button>
+      <button class="primary" id="confirmOk" type="button" style="flex:1;">继续 Continue</button>
+    </div>
+  </div>
+</div>
+
 <div class="wrap">
 
   <div id="msgbox"></div>
@@ -84,12 +96,13 @@ if (location.pathname !== "/" && !location.pathname.endsWith("/")) {
     </div>
 
     <div class="panel">
-      <h3><span class="stepnum">3</span><span>各仓 Route Info 文件 <span class="cn">Per-depot route-info CSVs — 3仓 × 2期 = 6个文件</span></span></h3>
+      <h3><span class="stepnum">3</span><span>各仓 Route Info 文件 <span class="cn">Per-depot route-info CSVs — 某仓某期没有运营就不用上传</span></span></h3>
+      <p style="font-size:11.5px;color:var(--muted);margin:0 0 14px;">某个仓在某一期没有运营（比如临时停运），对应的文件就留空不上传，报告会把它当作"该期未运营"处理，不会报错。<span style="display:block;">If a depot didn't operate in a given period (e.g. a temporary shutdown), just leave its file for that period empty — the report treats it as "not operating" instead of erroring.</span></p>
       <div class="grid3" id="route-file-grid"></div>
     </div>
 
     <div class="panel">
-      <h3><span class="stepnum">4</span><span>Billing 结算文件 <span class="cn">Network-wide billing CSV — 每期1个文件，覆盖三仓</span></span></h3>
+      <h3><span class="stepnum">4</span><span>Billing 结算文件 <span class="cn">Network-wide billing CSV — 可选，没有就用N/A代替成本</span></span></h3>
       <div class="grid2">
         <div class="field dropzone">
           <label>日期A Billing</label>
@@ -117,7 +130,8 @@ if (location.pathname !== "/" && !location.pathname.endsWith("/")) {
     </div>
 
     <div class="panel">
-      <h3><span class="stepnum">5</span><span>OPC 修正后实际揽收量 <span class="cn">OPC-corrected actual pickup — 手动填写，3仓 × 2期</span></span></h3>
+      <h3><span class="stepnum">5</span><span>OPC 修正后实际揽收量 <span class="cn">OPC-corrected actual pickup — 可选</span></span></h3>
+      <p style="font-size:11.5px;color:var(--muted);margin:0 0 14px;">留空不填也可以直接下一步——没填的会自动用路线级实际揽收合计代替，提交前会提醒你确认。<span style="display:block;">Leave a field blank and you can still proceed — it falls back to that depot's route-level actual pickup total, and you'll be asked to confirm before submitting.</span></p>
       <div class="grid3" id="opc-grid"></div>
     </div>
 
