@@ -1,8 +1,9 @@
 import json
+import threading
 from pathlib import Path
 from typing import Optional
 
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
+from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -250,6 +251,58 @@ def api_generate_insights(report_id: int, provider: Optional[str] = None, model:
     used_provider = (provider or insights.default_provider()).lower()
     db.save_insights(report_id, text, used_provider)
     return {"insights": text, "provider": used_provider, "cached": False}
+
+
+_insights_jobs: dict[int, dict] = {}
+_insights_jobs_lock = threading.Lock()
+
+
+def _run_insights_job(report_id: int, data: dict, provider: Optional[str], model: Optional[str], used_provider: str):
+    try:
+        text = insights.generate_insights(data, provider=provider, model=model)
+        db.save_insights(report_id, text, used_provider)
+        with _insights_jobs_lock:
+            _insights_jobs[report_id] = {"status": "done", "insights": text, "provider": used_provider}
+    except insights.InsightsError as e:
+        with _insights_jobs_lock:
+            _insights_jobs[report_id] = {"status": "error", "error": str(e)}
+    except Exception as e:
+        with _insights_jobs_lock:
+            _insights_jobs[report_id] = {"status": "error", "error": f"Unexpected error / 未预期的错误: {e}"}
+
+
+@app.post("/api/reports/{report_id}/insights/start")
+def api_start_insights(report_id: int, background_tasks: BackgroundTasks, provider: Optional[str] = None,
+                       model: Optional[str] = None, force: bool = False, user: dict = Depends(require_user)):
+    if not auth.ai_allowed(user):
+        raise HTTPException(
+            status_code=403,
+            detail=f"您的账号未获得AI功能授权，请联系管理员 {auth.ADMIN_USERNAME} 开通。"
+                   f" / Your account is not authorized to use AI insights — ask admin {auth.ADMIN_USERNAME} to enable it.",
+        )
+    r = db.get_report(report_id)
+    if r is None:
+        raise HTTPException(status_code=404, detail="Report not found")
+    if not force and r.get("insights") and (provider is None or provider == r.get("insights_provider")):
+        return {"status": "done", "insights": r["insights"], "provider": r.get("insights_provider"), "cached": True}
+
+    used_provider = (provider or insights.default_provider()).lower()
+    with _insights_jobs_lock:
+        existing = _insights_jobs.get(report_id)
+        if existing and existing.get("status") == "running":
+            return {"status": "running"}
+        _insights_jobs[report_id] = {"status": "running"}
+    background_tasks.add_task(_run_insights_job, report_id, r["data"], provider, model, used_provider)
+    return {"status": "running"}
+
+
+@app.get("/api/reports/{report_id}/insights/status")
+def api_insights_status(report_id: int, user: dict = Depends(require_user)):
+    with _insights_jobs_lock:
+        job = _insights_jobs.get(report_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="No insights job found for this report / 未找到该报告的生成任务，请先点击生成")
+    return job
 
 
 # ---- static frontend (mounted last so /api routes take priority) ----
