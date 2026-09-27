@@ -46,6 +46,7 @@ const AUTH_TOKEN_KEY = "crna_token";
 const AUTH_USER_KEY = "crna_username";
 let currentUser = null;
 let currentUserIsAdmin = false;
+let currentUserCanUseAi = false;
 
 function authHeaders() {
   const token = localStorage.getItem(AUTH_TOKEN_KEY);
@@ -70,6 +71,7 @@ async function checkAuth() {
     const body = await resp.json();
     currentUser = body.username;
     currentUserIsAdmin = !!body.is_admin;
+    currentUserCanUseAi = !!body.can_use_ai;
     hideLoginGate();
   } catch (e) {
     localStorage.removeItem(AUTH_TOKEN_KEY);
@@ -106,8 +108,32 @@ document.getElementById("btn-manage-users").addEventListener("click", () => {
   document.getElementById("f-new-pass").value = "";
   document.getElementById("userModalMsg").style.display = "none";
   document.getElementById("userModal").hidden = false;
+  loadUserAccess();
   loadAiSettings();
 });
+
+async function loadUserAccess() {
+  const wrap = document.getElementById("userAccessList");
+  wrap.innerHTML = '<span class="na">加载账号… Loading accounts…</span>';
+  try {
+    const resp = await fetch(API_BASE + "admin/users", { headers: authHeaders() });
+    const users = await resp.json();
+    if (!resp.ok) throw new Error(users.detail || "Could not load accounts");
+    wrap.innerHTML = '<div style="font-size:12px;font-weight:700;margin-bottom:8px;">AI 使用权限 <span class="cn">AI access</span></div>';
+    users.forEach(u => {
+      const row = document.createElement("label");
+      row.style.cssText = "display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-top:1px solid var(--line);font-size:12px;";
+      row.innerHTML = `<span>${u.username}${u.is_admin ? '（管理员）' : ''}</span><input type="checkbox" ${u.can_use_ai ? 'checked' : ''} ${u.is_admin ? 'disabled' : ''}>`;
+      const box = row.querySelector("input");
+      box.addEventListener("change", async () => {
+        const fd = new FormData(); fd.append("allowed", box.checked ? "true" : "false");
+        const save = await fetch(`${API_BASE}admin/users/${u.id}/ai-access`, { method: "POST", headers: authHeaders(), body: fd });
+        if (!save.ok) { box.checked = !box.checked; const body = await save.json(); showMsg(body.detail || "更新失败", "error"); }
+      });
+      wrap.appendChild(row);
+    });
+  } catch (e) { wrap.innerHTML = `<div class="msg error">读取账号失败 / ${e.message}</div>`; }
+}
 
 async function loadAiSettings() {
   const status = document.getElementById("aiSettingsStatus");
@@ -173,6 +199,7 @@ document.getElementById("btn-logout").addEventListener("click", async () => {
   localStorage.removeItem(AUTH_USER_KEY);
   currentUser = null;
   currentUserIsAdmin = false;
+  currentUserCanUseAi = false;
   showLoginGate();
 });
 checkAuth();
@@ -1095,7 +1122,14 @@ async function initInsightsPanel(meta) {
     status.textContent = '';
   }
 
+  if (!currentUserCanUseAi) {
+    btn.disabled = true;
+    sel.disabled = true;
+    status.textContent = '此账号未开通AI权限 / AI access is not enabled for this account';
+  }
+
   btn.onclick = async () => {
+    if (!currentUserCanUseAi) return;
     const provider = sel.value;
     if (!currentUserIsAdmin) {
       const confirmed = await showConfirm(
