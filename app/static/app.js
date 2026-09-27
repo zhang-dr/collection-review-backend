@@ -1097,6 +1097,14 @@ async function initInsightsPanel(meta) {
 
   btn.onclick = async () => {
     const provider = sel.value;
+    if (!currentUserIsAdmin) {
+      const confirmed = await showConfirm(
+        'AI 洞察费用提示 <span class="cn">AI usage notice</span>',
+        'AI洞察会产生相关费用，请检查数据准确后再使用，避免浪费。<span class="cn" style="display:block;margin-top:6px;">AI insights incur usage costs. Please verify the data before continuing to avoid unnecessary spend.</span>',
+        '确认生成 Generate'
+      );
+      if (!confirmed) return;
+    }
     btn.disabled = true;
     status.textContent = '生成中…可能需要几十秒 Generating… may take up to a minute';
     out.style.opacity = '0.5';
