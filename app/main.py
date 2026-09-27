@@ -84,6 +84,33 @@ def api_create_user(username: str = Form(...), password: str = Form(...),
     return {"username": user["username"], "created": True}
 
 
+@app.get("/api/admin/ai-settings")
+def api_ai_settings(admin: dict = Depends(require_admin)):
+    return {"default": insights.default_provider(), "providers": insights.available_providers()}
+
+
+@app.post("/api/admin/ai-settings")
+def api_save_ai_settings(provider: str = Form(...), api_key: str = Form(""),
+                         model: str = Form(""), clear: bool = Form(False),
+                         admin: dict = Depends(require_admin)):
+    provider = provider.lower().strip()
+    if provider not in insights.PROVIDER_CONFIG:
+        raise HTTPException(status_code=400, detail="Unsupported AI provider")
+    if clear:
+        db.delete_setting(f"ai.{provider}.api_key")
+        db.delete_setting(f"ai.{provider}.model")
+    else:
+        if not api_key.strip() and not insights.available_providers()[provider]["configured"]:
+            raise HTTPException(status_code=400, detail="API key is required")
+        if api_key.strip():
+            db.set_setting(f"ai.{provider}.api_key", api_key.strip())
+        if model.strip():
+            db.set_setting(f"ai.{provider}.model", model.strip())
+    db.set_setting("ai.default_provider", provider)
+    status = insights.available_providers()[provider]
+    return {"provider": provider, "configured": status["configured"], "model": status["model"]}
+
+
 @app.post("/api/upload")
 async def upload(
     user: dict = Depends(require_user),
@@ -182,7 +209,7 @@ def api_delete_report(report_id: int, user: dict = Depends(require_user)):
 
 @app.get("/api/insights/providers")
 def api_insights_providers(user: dict = Depends(require_user)):
-    return {"default": insights.DEFAULT_PROVIDER, "providers": insights.available_providers()}
+    return {"default": insights.default_provider(), "providers": insights.available_providers()}
 
 
 @app.post("/api/reports/{report_id}/insights")
@@ -197,7 +224,7 @@ def api_generate_insights(report_id: int, provider: Optional[str] = None, model:
         text = insights.generate_insights(r["data"], provider=provider, model=model)
     except insights.InsightsError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    used_provider = (provider or insights.DEFAULT_PROVIDER).lower()
+    used_provider = (provider or insights.default_provider()).lower()
     db.save_insights(report_id, text, used_provider)
     return {"insights": text, "provider": used_provider, "cached": False}
 
