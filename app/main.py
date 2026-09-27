@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 from typing import Optional
 
@@ -16,6 +17,7 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 db.init_db()
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
+ADMIN_USERNAME = os.environ.get("ADMIN_USERNAME", "Xihao")
 
 
 def _token_from_header(authorization: str | None) -> str | None:
@@ -33,21 +35,25 @@ def require_user(authorization: str | None = Header(None)) -> dict:
     return user
 
 
+def require_admin(user: dict = Depends(require_user)) -> dict:
+    if user["username"] != ADMIN_USERNAME:
+        raise HTTPException(status_code=403, detail="Administrator access required / 仅管理员可操作")
+    return user
+
+
 @app.get("/api/health")
 def health():
     return {"ok": True}
 
 
 # ---------------------------------------------------------------------------
-# Auth — lightweight username(+optional password) login. First login for a
-# username creates the account; later logins with that username must match
-# the same password.
+# Auth — existing accounts may log in; only the administrator can create users.
 # ---------------------------------------------------------------------------
 
 @app.post("/api/auth/login")
-def api_login(username: str = Form(...), password: str = Form("")):
+def api_login(username: str = Form(...), password: str = Form(...)):
     try:
-        result = auth.login_or_register(username, password)
+        result = auth.login(username, password)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except PermissionError as e:
@@ -65,7 +71,17 @@ def api_logout(authorization: str | None = Header(None)):
 
 @app.get("/api/auth/me")
 def api_me(user: dict = Depends(require_user)):
-    return {"username": user["username"]}
+    return {"username": user["username"], "is_admin": user["username"] == ADMIN_USERNAME}
+
+
+@app.post("/api/auth/users")
+def api_create_user(username: str = Form(...), password: str = Form(...),
+                    admin: dict = Depends(require_admin)):
+    try:
+        user = auth.register_user(username, password)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"username": user["username"], "created": True}
 
 
 @app.post("/api/upload")
