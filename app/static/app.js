@@ -25,6 +25,10 @@ const pct = (n, dp = 1) => (n === null || n === undefined || Number.isNaN(n)) ? 
 // methodology doc explicitly flags as previously mis-formatted.
 const ppfmt = (n, dp = 1) => (n === null || n === undefined || Number.isNaN(n)) ? '<span class="na">N/A</span>' : (n >= 0 ? '+' : '') + n.toFixed(dp) + 'pp';
 const gbp = (n, dp = 3) => (n === null || n === undefined || Number.isNaN(n)) ? '<span class="na">N/A</span>' : '£' + Number(n).toFixed(dp);
+// % change guarded against a zero/null/missing base — an inactive depot's
+// period has routes14=0 / cpp14=null, which would otherwise divide into
+// Infinity or NaN instead of a clean N/A.
+const pctChange = (nv, ov) => (nv == null || ov == null || !ov || Number.isNaN(nv) || Number.isNaN(ov)) ? null : (nv / ov - 1) * 100;
 // qualitative palette for dynamic categories (vehicle classes, cancel reasons)
 const QUAL_COLORS = ['#5c4b8a', '#b8862c', '#2f5f92', '#2f7a4f', '#c1592e', '#a33e6b', '#8a8f78', '#7a5230'];
 
@@ -95,6 +99,22 @@ document.getElementById("btn-login").addEventListener("click", async () => {
   }
 });
 document.getElementById("f-login-pass").addEventListener("keydown", e => { if (e.key === "Enter") document.getElementById("btn-login").click(); });
+
+/* ---------------- generic confirm modal (Promise-based) ---------------- */
+function showConfirm(titleHtml, bodyHtml, okLabel = "继续 Continue") {
+  return new Promise(resolve => {
+    const modal = document.getElementById("confirmModal");
+    document.getElementById("confirmTitle").innerHTML = titleHtml;
+    document.getElementById("confirmBody").innerHTML = bodyHtml;
+    const okBtn = document.getElementById("confirmOk");
+    const cancelBtn = document.getElementById("confirmCancel");
+    okBtn.textContent = okLabel;
+    modal.hidden = false;
+    const cleanup = result => { modal.hidden = true; okBtn.onclick = null; cancelBtn.onclick = null; resolve(result); };
+    okBtn.onclick = () => cleanup(true);
+    cancelBtn.onclick = () => cleanup(false);
+  });
+}
 document.getElementById("btn-logout").addEventListener("click", async () => {
   try { await fetch(API_BASE + "auth/logout", { method: "POST", headers: authHeaders() }); } catch (e) { /* ignore */ }
   localStorage.removeItem(AUTH_TOKEN_KEY);
@@ -178,8 +198,8 @@ DEPOTS.forEach(depot => {
   og.className = "filegroup";
   og.innerHTML = `
     <span class="depot-tag ${cls}">${BI[depot].en} ${BI[depot].cn}</span>
-    <div class="field"><label>日期A OPC</label><input type="number" id="f-opc-${key}-a" placeholder="16114"></div>
-    <div class="field" style="margin-bottom:0;"><label>日期B OPC</label><input type="number" id="f-opc-${key}-b" placeholder="14075"></div>
+    <div class="field"><label>日期A OPC <span class="cn">optional</span></label><input type="number" id="f-opc-${key}-a" placeholder="留空=自动回退 auto-fallback"></div>
+    <div class="field" style="margin-bottom:0;"><label>日期B OPC <span class="cn">optional</span></label><input type="number" id="f-opc-${key}-b" placeholder="留空=自动回退 auto-fallback"></div>
   `;
   opcGrid.appendChild(og);
 });
@@ -297,14 +317,46 @@ document.getElementById("btn-submit").addEventListener("click", async () => {
     dateB = rangeLabel(bs, be);
   }
 
+  // Route-info files are per depot/date and OPTIONAL — a depot that didn't
+  // operate a given period just has no file for it. Gather which files are
+  // actually present first, so we know which depot/date combos are "active"
+  // before deciding what needs an OPC-fallback confirmation.
+  const routeFiles = {}; // { "Manchester|a": File, ... }
+  for (const depot of DEPOTS) {
+    const key = DEPOT_KEY[depot];
+    const fa = document.getElementById(`f-route-${key}-a`).files[0];
+    const fb = document.getElementById(`f-route-${key}-b`).files[0];
+    if (fa) routeFiles[`${depot}|a`] = fa;
+    if (fb) routeFiles[`${depot}|b`] = fb;
+  }
+  if (Object.keys(routeFiles).length === 0) {
+    showMsg("至少要上传一个仓的route info文件 / At least one depot's route-info file is required", "error");
+    return;
+  }
+
   const opc = {};
+  const missingOpc = []; // depots/dates with a route file but no OPC entered
   for (const depot of DEPOTS) {
     const key = DEPOT_KEY[depot];
     const a = document.getElementById(`f-opc-${key}-a`).value;
     const b = document.getElementById(`f-opc-${key}-b`).value;
-    if (!a || !b) { showMsg(`请填写${BI[depot].cn}(${depot})两个日期的OPC数字`, "error"); return; }
-    opc[depot] = { a: Number(a), b: Number(b) };
+    const entry = {};
+    if (a !== "") entry.a = Number(a); else if (routeFiles[`${depot}|a`]) missingOpc.push(`${BI[depot].en} ${BI[depot].cn} · A`);
+    if (b !== "") entry.b = Number(b); else if (routeFiles[`${depot}|b`]) missingOpc.push(`${BI[depot].en} ${BI[depot].cn} · B`);
+    if (Object.keys(entry).length) opc[depot] = entry;
   }
+
+  if (missingOpc.length) {
+    const ok = await showConfirm(
+      "没有填写OPC <span class=\"cn\" style=\"font-weight:400;color:var(--muted);\">No OPC entered</span>",
+      `以下仓/期没有填写OPC，会自动用路线级实际揽收合计代替：<br><b>${missingOpc.join(', ')}</b><br><br>继续吗？` +
+      `<span style="display:block;margin-top:10px;">These depot/period(s) have no OPC entered and will fall back to route-level actual pickup instead:<br><b>${missingOpc.join(', ')}</b><br><br>Continue?</span>`
+    );
+    if (!ok) return;
+  }
+
+  const ba = document.getElementById("f-billing-a").files[0];
+  const bb = document.getElementById("f-billing-b").files[0];
 
   const fd = new FormData();
   fd.append("name", name);
@@ -316,17 +368,11 @@ document.getElementById("btn-submit").addEventListener("click", async () => {
 
   for (const depot of DEPOTS) {
     const key = DEPOT_KEY[depot];
-    const fa = document.getElementById(`f-route-${key}-a`).files[0];
-    const fb = document.getElementById(`f-route-${key}-b`).files[0];
-    if (!fa || !fb) { showMsg(`请上传${BI[depot].cn}(${depot})两个日期的route info文件`, "error"); return; }
-    fd.append(`route_${key}_a`, fa);
-    fd.append(`route_${key}_b`, fb);
+    if (routeFiles[`${depot}|a`]) fd.append(`route_${key}_a`, routeFiles[`${depot}|a`]);
+    if (routeFiles[`${depot}|b`]) fd.append(`route_${key}_b`, routeFiles[`${depot}|b`]);
   }
-  const ba = document.getElementById("f-billing-a").files[0];
-  const bb = document.getElementById("f-billing-b").files[0];
-  if (!ba || !bb) { showMsg("请上传两个日期的billing文件", "error"); return; }
-  fd.append("billing_a", ba);
-  fd.append("billing_b", bb);
+  if (ba) fd.append("billing_a", ba);
+  if (bb) fd.append("billing_b", bb);
 
   btn.disabled = true; status.textContent = "计算中… Processing…";
   try {
@@ -336,7 +382,7 @@ document.getElementById("btn-submit").addEventListener("click", async () => {
     if (!resp.ok) throw new Error(body.detail || "Upload failed");
     showMsg("报告生成成功！Report generated.", "ok");
     status.textContent = "";
-    renderReport(body.data, { author: body.author, granularity: body.granularity, name: body.name });
+    renderReport(body.data, { author: body.author, granularity: body.granularity, name: body.name, report_id: body.id });
     switchView("report");
   } catch (e) {
     showMsg("出错了 / Error: " + e.message, "error");
@@ -364,7 +410,10 @@ async function loadHistory() {
       const resp2 = await fetch(`${API_BASE}reports/${r.id}`, { headers: authHeaders() });
       if (resp2.status === 401) { showLoginGate(); return; }
       const full = await resp2.json();
-      renderReport(full.data, { author: full.author, granularity: full.granularity, name: full.name });
+      renderReport(full.data, {
+        author: full.author, granularity: full.granularity, name: full.name, report_id: full.id,
+        cachedInsights: full.insights, cachedInsightsProvider: full.insights_provider,
+      });
       switchView("report");
     });
     list.appendChild(item);
@@ -376,6 +425,35 @@ async function loadHistory() {
    ============================================================ */
 function elt(tag, cls, html) { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; }
 
+/* ---------------- shared chart tooltip ----------------
+   One floating tooltip element shared by every chart, positioned next
+   to the cursor. attachTooltip(el, htmlOrFn) wires mouseenter/move/leave
+   on any chart mark; htmlOrFn can be a fixed HTML string or a function
+   (re-evaluated on each hover, for marks whose content doesn't change). */
+const chartTooltip = elt('div');
+chartTooltip.id = 'chartTooltip';
+document.body.appendChild(chartTooltip);
+function positionTooltip(evt) {
+  const pad = 14;
+  let x = evt.clientX + pad, y = evt.clientY + pad;
+  const rect = chartTooltip.getBoundingClientRect();
+  if (x + rect.width > window.innerWidth - 8) x = evt.clientX - rect.width - pad;
+  if (y + rect.height > window.innerHeight - 8) y = evt.clientY - rect.height - pad;
+  if (x < 4) x = 4;
+  if (y < 4) y = 4;
+  chartTooltip.style.left = x + 'px';
+  chartTooltip.style.top = y + 'px';
+}
+function attachTooltip(el, htmlOrFn) {
+  el.addEventListener('mouseenter', e => {
+    chartTooltip.innerHTML = typeof htmlOrFn === 'function' ? htmlOrFn() : htmlOrFn;
+    chartTooltip.style.opacity = '1';
+    positionTooltip(e);
+  });
+  el.addEventListener('mousemove', positionTooltip);
+  el.addEventListener('mouseleave', () => { chartTooltip.style.opacity = '0'; });
+}
+
 function renderVBar(container, groups, legendPairs) {
   container.innerHTML = '';
   const max = Math.max(...groups.flatMap(g => [g.a.v, g.b.v])) * 1.18 || 1;
@@ -383,11 +461,15 @@ function renderVBar(container, groups, legendPairs) {
   groups.forEach(g => {
     const grp = elt('div', 'vbar-grp');
     const pair = elt('div', 'vbar-pair');
-    [g.a, g.b].forEach(b => {
+    [g.a, g.b].forEach((b, idx) => {
       const bar = elt('div', 'vbar');
       bar.style.height = Math.max(2, (b.v / max * 100)) + '%';
       bar.style.background = b.color;
-      bar.appendChild(elt('div', 'vbar-val', b.valText != null ? b.valText : Math.round(b.v).toLocaleString()));
+      bar.style.cursor = 'pointer';
+      const valDisplay = b.valText != null ? b.valText : Math.round(b.v).toLocaleString();
+      bar.appendChild(elt('div', 'vbar-val', valDisplay));
+      const seriesLabel = legendPairs && legendPairs[idx] ? legendPairs[idx].label : (idx === 0 ? 'A' : 'B');
+      attachTooltip(bar, `<b>${g.label}</b><br>${seriesLabel}: ${valDisplay}`);
       pair.appendChild(bar);
     });
     grp.appendChild(pair);
@@ -405,19 +487,43 @@ function renderVBar(container, groups, legendPairs) {
 function renderDonut(container, segments) {
   container.innerHTML = '';
   const total = segments.reduce((s, x) => s + x.value, 0) || 1;
-  let acc = 0;
-  const stops = segments.map(s => { const start = acc / total * 360; acc += s.value; const end = acc / total * 360; return `${s.color} ${start}deg ${end}deg`; }).join(', ');
   const wrap = elt('div', 'donut-wrap');
   wrap.style.cssText = 'display:flex;align-items:center;justify-content:center;gap:14px;height:100%;';
-  const donut = elt('div'); donut.style.cssText = 'width:96px;height:96px;border-radius:50%;flex-shrink:0;'; donut.style.background = `conic-gradient(${stops})`;
+  // Drawn as an SVG ring (stacked stroke-dasharray arcs) rather than a
+  // single conic-gradient div, so each segment is its own hoverable
+  // element — a flat gradient div can't offer per-segment feedback.
+  const size = 96, strokeW = 17, r = size / 2 - strokeW / 2, cx = size / 2, cy = size / 2;
+  const circumference = 2 * Math.PI * r;
+  const svgNS = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(svgNS, 'svg');
+  svg.setAttribute('viewBox', `0 0 ${size} ${size}`);
+  svg.setAttribute('width', size); svg.setAttribute('height', size);
+  svg.style.cssText = 'flex-shrink:0;transform:rotate(-90deg);overflow:visible;';
+  let acc = 0;
+  segments.forEach(s => {
+    const frac = s.value / total;
+    const len = Math.max(0, frac * circumference - 1.5);
+    const circle = document.createElementNS(svgNS, 'circle');
+    circle.setAttribute('cx', cx); circle.setAttribute('cy', cy); circle.setAttribute('r', r);
+    circle.setAttribute('fill', 'none');
+    circle.setAttribute('stroke', s.color);
+    circle.setAttribute('stroke-width', strokeW);
+    circle.setAttribute('stroke-dasharray', `${len} ${circumference - len}`);
+    circle.setAttribute('stroke-dashoffset', (-acc).toFixed(2));
+    circle.style.cursor = 'pointer';
+    attachTooltip(circle, `<b>${s.label}</b>: ${s.value.toLocaleString()} (${(frac * 100).toFixed(1)}%)`);
+    svg.appendChild(circle);
+    acc += frac * circumference;
+  });
   const legend = elt('div'); legend.style.cssText = 'font-size:9.5px;color:var(--ink-soft);display:flex;flex-direction:column;gap:5px;';
   segments.forEach(s => {
-    const row = elt('div'); row.style.cssText = 'display:flex;align-items:center;gap:6px;';
+    const row = elt('div'); row.style.cssText = 'display:flex;align-items:center;gap:6px;cursor:pointer;';
     const sw = elt('span'); sw.style.cssText = 'width:8px;height:8px;border-radius:2px;flex-shrink:0;'; sw.style.background = s.color; row.appendChild(sw);
     row.appendChild(document.createTextNode(`${s.label}: ${(s.value / total * 100).toFixed(0)}%`));
+    attachTooltip(row, `<b>${s.label}</b>: ${s.value.toLocaleString()} (${(s.value / total * 100).toFixed(1)}%)`);
     legend.appendChild(row);
   });
-  wrap.appendChild(donut); wrap.appendChild(legend);
+  wrap.appendChild(svg); wrap.appendChild(legend);
   container.appendChild(wrap);
 }
 
@@ -429,13 +535,15 @@ function renderHGroupedBar(container, rows, legendPairs) {
     const row = elt('div'); row.style.cssText = 'display:grid;grid-template-columns:70px 1fr;gap:8px;align-items:center;';
     row.appendChild(elt('div', null, r.label)); row.firstChild.style.cssText = 'font-size:9px;color:var(--muted);text-align:right;line-height:1.2;';
     const track = elt('div'); track.style.cssText = 'display:flex;flex-direction:column;gap:2px;';
-    [r.a, r.b].forEach(b => {
-      const bar = elt('div'); bar.style.cssText = 'height:8px;border-radius:2px;position:relative;min-width:2px;';
+    [r.a, r.b].forEach((b, idx) => {
+      const bar = elt('div'); bar.style.cssText = 'height:8px;border-radius:2px;position:relative;min-width:2px;cursor:pointer;';
       bar.style.width = Math.max(1, (b.v / max * 78)) + '%';
       bar.style.background = b.color;
       const val = elt('div', null, Math.round(b.v).toLocaleString());
       val.style.cssText = 'position:absolute;left:calc(100% + 5px);top:50%;transform:translateY(-50%);font-size:8px;font-weight:700;color:var(--ink-soft);white-space:nowrap;';
       bar.appendChild(val);
+      const seriesLabel = legendPairs && legendPairs[idx] ? legendPairs[idx].label : (idx === 0 ? 'A' : 'B');
+      attachTooltip(bar, `<b>${r.label}</b><br>${seriesLabel}: ${Math.round(b.v).toLocaleString()}`);
       track.appendChild(bar);
     });
     row.appendChild(track);
@@ -463,7 +571,10 @@ function renderStackedHBar(container, rows, meta, scaleMax, showPct) {
       const seg = elt('div', 'stackbar-seg');
       seg.style.width = w + '%';
       seg.style.background = meta[s.key].color;
+      seg.style.cursor = 'pointer';
       if (w > 7) seg.textContent = showPct ? w.toFixed(0) + '%' : s.val;
+      const valText = showPct ? w.toFixed(1) + '%' : s.val.toLocaleString();
+      attachTooltip(seg, `<b>${r.label}</b><br>${meta[s.key].label}: ${valText}`);
       track.appendChild(seg);
     });
     row.appendChild(track);
@@ -484,7 +595,8 @@ function renderHBarList(container, items) {
   items.forEach(it => {
     const row = elt('div', 'hbarlist-row');
     row.style.height = rowH.toFixed(2) + 'px';
-    if (it.tooltip) row.title = it.tooltip;
+    row.style.cursor = 'pointer';
+    attachTooltip(row, it.tooltip || `<b>${it.label}</b>: ${it.valText != null ? it.valText : it.val}`);
     row.appendChild(elt('div', 'hbarlist-lbl', it.label));
     const track = elt('div', 'hbarlist-track');
     const bar = elt('div', 'hbarlist-bar');
@@ -500,30 +612,77 @@ function renderHBarList(container, items) {
 
 function renderMultiLine(container, series, xLabels) {
   container.innerHTML = '';
+  // Billing/OPC are optional now, so a £/parcel series can contain
+  // null (no billing that period) — filter those out of the scale and
+  // skip drawing a mark/label for them rather than plotting NaN.
+  const isNum = v => v != null && !Number.isNaN(v);
+  const fmtGbp = v => isNum(v) ? '£' + v.toFixed(2) : 'N/A';
+  const allVals = series.flatMap(s => s.points).filter(isNum);
+  if (!allVals.length) {
+    container.innerHTML = '<p class="na" style="text-align:center;padding-top:30%;">暂无数据 No data</p>';
+    return;
+  }
   const wrap = elt('div', 'mlwrap');
   const svgNS = 'http://www.w3.org/2000/svg';
   const svg = document.createElementNS(svgNS, 'svg');
-  svg.setAttribute('viewBox', '0 0 300 100'); svg.setAttribute('preserveAspectRatio', 'none');
-  const allVals = series.flatMap(s => s.points);
+  const VBW = 300, VBH = 120;
+  svg.setAttribute('viewBox', `0 0 ${VBW} ${VBH}`);
+  svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
   const min = Math.min(...allVals), max = Math.max(...allVals);
-  const range = (max - min) || 1;
-  const padL = 6, padR = 6, padT = 12, padB = 16;
-  const plotW = 300 - padL - padR, plotH = 100 - padT - padB;
+  const range = (max - min) || (Math.abs(max) * 0.1) || 1;
+  // Extra top/bottom padding vs. the old 100-tall viewBox gives the
+  // per-point £ labels and the date labels room to sit inside the box
+  // instead of being clipped by the chart edge or the legend below it.
+  const padL = 10, padR = 10, padT = 18, padB = 22;
+  const plotW = VBW - padL - padR, plotH = VBH - padT - padB;
   const n = xLabels.length;
-  const xAt = i => padL + (n === 1 ? 0 : (i / (n - 1)) * plotW);
+  const xAt = i => padL + (n === 1 ? plotW / 2 : (i / (n - 1)) * plotW);
   const yAt = v => padT + plotH - ((v - min) / range) * plotH;
-  let svgInner = '';
+
   series.forEach(s => {
-    const pts = s.points.map((v, i) => [xAt(i), yAt(v)]);
-    const path = pts.map((p, i) => (i === 0 ? 'M' : 'L') + p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' ');
-    svgInner += `<path d="${path}" fill="none" stroke="${s.color}" stroke-width="2.2"/>`;
-    pts.forEach(p => svgInner += `<circle cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="3" fill="${s.color}"/>`);
+    const validIdx = s.points.map((v, i) => i).filter(i => isNum(s.points[i]));
+    if (validIdx.length >= 2) {
+      const path = document.createElementNS(svgNS, 'path');
+      path.setAttribute('d', validIdx.map((i, k) => (k === 0 ? 'M' : 'L') + xAt(i).toFixed(1) + ',' + yAt(s.points[i]).toFixed(1)).join(' '));
+      path.setAttribute('fill', 'none'); path.setAttribute('stroke', s.color); path.setAttribute('stroke-width', '2.2');
+      svg.appendChild(path);
+    }
+    validIdx.forEach(i => {
+      const x = xAt(i), y = yAt(s.points[i]);
+      // Anchor the first/last point's label to start/end (not middle) so
+      // it can't run past the chart's left/right edge — this, plus the
+      // wider viewBox padding above, is what was clipping dates & prices.
+      const anchor = i === 0 ? 'start' : (i === n - 1 ? 'end' : 'middle');
+      const dx = i === 0 ? 2.5 : (i === n - 1 ? -2.5 : 0);
+      const circle = document.createElementNS(svgNS, 'circle');
+      circle.setAttribute('cx', x.toFixed(1)); circle.setAttribute('cy', y.toFixed(1)); circle.setAttribute('r', '3.6');
+      circle.setAttribute('fill', s.color); circle.setAttribute('stroke', 'var(--panel)'); circle.setAttribute('stroke-width', '1.2');
+      circle.style.cursor = 'pointer';
+      attachTooltip(circle, `<b>${s.label}</b><br>${xLabels[i]}: ${fmtGbp(s.points[i])}`);
+      svg.appendChild(circle);
+      // Value shown directly on the chart (not just on hover) — the
+      // complaint was that prices were only visible by guessing, so the
+      // number itself is now always on the page, hover just confirms it.
+      const text = document.createElementNS(svgNS, 'text');
+      text.setAttribute('x', (x + dx).toFixed(1)); text.setAttribute('y', (y - 7).toFixed(1));
+      text.setAttribute('font-size', '8.5'); text.setAttribute('text-anchor', anchor);
+      text.setAttribute('fill', s.color); text.setAttribute('font-weight', '700');
+      text.textContent = fmtGbp(s.points[i]);
+      svg.appendChild(text);
+    });
   });
-  xLabels.forEach((lbl, i) => { svgInner += `<text x="${xAt(i).toFixed(1)}" y="98" font-size="7" text-anchor="middle" fill="currentColor" opacity="0.55">${lbl}</text>`; });
-  svg.innerHTML = svgInner;
+  xLabels.forEach((lbl, i) => {
+    const anchor = i === 0 ? 'start' : (i === n - 1 ? 'end' : 'middle');
+    const text = document.createElementNS(svgNS, 'text');
+    text.setAttribute('x', xAt(i).toFixed(1)); text.setAttribute('y', VBH - 6);
+    text.setAttribute('font-size', '8'); text.setAttribute('text-anchor', anchor);
+    text.setAttribute('fill', 'currentColor'); text.setAttribute('opacity', '0.65');
+    text.textContent = lbl;
+    svg.appendChild(text);
+  });
   wrap.appendChild(svg);
   const legend = elt('div', 'vbar-legend');
-  series.forEach(s => legend.innerHTML += `<span><span class="sw" style="background:${s.color}"></span>${s.label}: £${s.points[0].toFixed(2)}→£${s.points[s.points.length - 1].toFixed(2)}</span>`);
+  series.forEach(s => legend.innerHTML += `<span><span class="sw" style="background:${s.color}"></span>${s.label}: ${fmtGbp(s.points[0])}→${fmtGbp(s.points[s.points.length - 1])}</span>`);
   wrap.appendChild(legend);
   container.appendChild(wrap);
 }
@@ -544,13 +703,13 @@ function renderReport(D, meta = {}) {
   root.innerHTML = buildReportSkeleton(D, meta);
 
   const S = D.summary, NET = D.net, FORECAST = D.forecast;
-  const gapNet14 = (NET.act14 / NET.f14 - 1) * 100, gapNet21 = (NET.act21 / NET.f21 - 1) * 100;
+  const gapNet14 = pctChange(NET.act14, NET.f14), gapNet21 = pctChange(NET.act21, NET.f21);
 
   /* ---- KPI row ---- */
   const kpis = [
     { en: 'Network Actual Pickup — ' + D.date_b_label, cn: '全网实际揽收量', val: fmt(NET.act21) + ' pcs' },
     { en: '£/Parcel WoW', cn: '单票成本环比', val: gbp(NET.cpp14) + ' → ' + gbp(NET.cpp21) },
-    { en: 'Forecast Deviation WoW', cn: '预测偏差环比', val: gapNet14.toFixed(1) + '% → ' + gapNet21.toFixed(1) + '%' },
+    { en: 'Forecast Deviation WoW', cn: '预测偏差环比', val: pct(gapNet14) + ' → ' + pct(gapNet21) },
     { en: 'Total Routes WoW', cn: '总路线数环比', val: NET.routes14 + ' → ' + NET.routes21 },
     { en: 'Parcels / Route WoW', cn: '单路线产出环比', val: fmt(NET.ppr14) + ' → ' + fmt(NET.ppr21) },
     { en: 'Job Efficiency WoW', cn: 'Job效率环比 (pcs/hr)', val: fmt(NET.job_eff14, 1) + ' → ' + fmt(NET.job_eff21, 1) },
@@ -567,25 +726,36 @@ function renderReport(D, meta = {}) {
 
   /* ---- 01 review table ---- */
   const reviewTable = document.getElementById('reviewTable');
+  // Data-quality disclosure helpers: an inactive depot/period shows a
+  // "not operating" badge instead of implying a genuine zero, and an
+  // OPC figure that fell back to route-level actual (no manual OPC
+  // entered) is marked so a reader never mistakes it for an OPC-confirmed
+  // number — surfaces D.depot_active / S[d].opc_source_a/b from the backend.
+  const inactiveBadge = '<span class="badge-inactive">未运营 Not operating</span>';
+  const fallbackBadge = (src, label) => src === 'fallback'
+    ? `<span class="badge-fallback" title="没有手动填写OPC，已用路线级实际揽收合计代替 / No manual OPC entered — using route-level actual pickup instead">${label}回退 fallback</span>` : '';
   DEPOTS.forEach(d => {
     const s = S[d];
-    const dRoutes = (s.routes21 / s.routes14 - 1) * 100, dAct = (s.act21 / s.act14 - 1) * 100, dCpp = (s.cpp21 / s.cpp14 - 1) * 100;
-    const gap14 = (s.act14 / s.f14 - 1) * 100, gap21 = (s.act21 / s.f21 - 1) * 100;
+    const dRoutes = pctChange(s.routes21, s.routes14), dAct = pctChange(s.act21, s.act14), dCpp = pctChange(s.cpp21, s.cpp14);
+    const gap14 = pctChange(s.act14, s.f14), gap21 = pctChange(s.act21, s.f21);
+    const actCell = (!s.active_a && !s.active_b) ? inactiveBadge :
+      `${s.active_a ? fmt(s.act14) : '<span class="badge-inactive">N/A</span>'} → ${s.active_b ? fmt(s.act21) : '<span class="badge-inactive">N/A</span>'}` +
+      `${s.active_a ? fallbackBadge(s.opc_source_a, 'A ') : ''}${s.active_b ? fallbackBadge(s.opc_source_b, 'B ') : ''}`;
     reviewTable.innerHTML += `<tr>
-      <td style="text-align:left;">${tagHtml(d)}</td>
-      <td class="tabular">${s.routes14} → ${s.routes21}</td>
+      <td style="text-align:left;">${tagHtml(d)}${!s.active_a ? '<span class="badge-inactive" style="margin-left:4px;">A 未运营</span>' : ''}${!s.active_b ? '<span class="badge-inactive" style="margin-left:4px;">B 未运营</span>' : ''}</td>
+      <td class="tabular">${s.active_a ? s.routes14 : '<span class="na">N/A</span>'} → ${s.active_b ? s.routes21 : '<span class="na">N/A</span>'}</td>
       <td class="tabular ${dRoutes > 0 ? 'neg' : dRoutes < 0 ? 'pos' : ''}">${pct(dRoutes)}</td>
-      <td class="tabular">${fmt(s.f14)} → ${fmt(s.f21)}</td>
-      <td class="tabular">${fmt(s.act14)} → ${fmt(s.act21)}</td>
+      <td class="tabular">${s.active_a ? fmt(s.f14) : '<span class="na">N/A</span>'} → ${s.active_b ? fmt(s.f21) : '<span class="na">N/A</span>'}</td>
+      <td class="tabular">${actCell}</td>
       <td class="tabular">${pct(gap14)}</td><td class="tabular">${pct(gap21)}</td>
       <td class="tabular ${dAct >= 0 ? 'pos' : 'neg'}">${pct(dAct)}</td>
       <td class="tabular">${gbp(s.cpp14)} → ${gbp(s.cpp21)}</td>
       <td class="tabular ${dCpp <= 0 ? 'pos' : 'neg'}">${pct(dCpp)}</td>
-      <td class="tabular">${s.x14} → ${s.x21}</td>
-      <td class="tabular">${fmt(s.merch_f21)} → ${fmt(s.merch_a21)}</td>
+      <td class="tabular">${s.active_a ? s.x14 : '<span class="na">N/A</span>'} → ${s.active_b ? s.x21 : '<span class="na">N/A</span>'}</td>
+      <td class="tabular">${s.active_b ? fmt(s.merch_f21) + ' → ' + fmt(s.merch_a21) : '<span class="na">N/A</span>'}</td>
     </tr>`;
   });
-  const netDAct = (NET.act21 / NET.act14 - 1) * 100, netDCpp = (NET.cpp21 / NET.cpp14 - 1) * 100, netDRoutes = (NET.routes21 / NET.routes14 - 1) * 100;
+  const netDAct = pctChange(NET.act21, NET.act14), netDCpp = pctChange(NET.cpp21, NET.cpp14), netDRoutes = pctChange(NET.routes21, NET.routes14);
   const totCancel14 = DEPOTS.reduce((a, d) => a + S[d].x14, 0), totCancel21 = DEPOTS.reduce((a, d) => a + S[d].x21, 0);
   reviewTable.innerHTML += `<tr class="totalrow">
     <td style="text-align:left;">Network<span class="cn" style="display:block;">全网</span></td>
@@ -791,6 +961,108 @@ function renderReport(D, meta = {}) {
     document.getElementById('warnNote').innerHTML = '⚠ ' + D.warnings.join('<br>⚠ ');
     document.getElementById('warnNote').style.display = 'block';
   }
+
+  initInsightsPanel(meta);
+}
+
+/* ============================================================
+   AI INSIGHTS — McKinsey-style narrative, generated on request via
+   /api/reports/{id}/insights. Strictly opt-in (a button, never fired
+   automatically) since it costs real API usage on whichever provider
+   is selected. Supports multiple providers (Claude/Gemini/ChatGPT);
+   only ones with a server-side API key configured are usable.
+   ============================================================ */
+
+// Minimal, zero-dependency Markdown → HTML for the AI's response:
+// ## / ### / #### headings, "- " / "* " bullet lists, **bold**, *italic*,
+// blank-line-separated paragraphs. Deliberately not a full CommonMark
+// implementation — just enough for the house-style output the system
+// prompt asks the model to produce.
+function renderMarkdownLite(md) {
+  const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const inlineFmt = s => esc(s).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/(^|[^*])\*([^*]+?)\*(?!\*)/g, '$1<em>$2</em>');
+  const lines = (md || '').replace(/\r\n/g, '\n').split('\n');
+  let html = '', inList = false;
+  const closeList = () => { if (inList) { html += '</ul>'; inList = false; } };
+  lines.forEach(line => {
+    const l = line.trim();
+    if (!l) { closeList(); return; }
+    let m;
+    if ((m = /^(#{2,4})\s+(.*)$/.exec(l))) {
+      closeList();
+      const tag = 'h' + Math.min(6, m[1].length + 1);
+      html += `<${tag}>${inlineFmt(m[2])}</${tag}>`;
+    } else if (/^[-*]\s+/.test(l)) {
+      if (!inList) { html += '<ul>'; inList = true; }
+      html += `<li>${inlineFmt(l.replace(/^[-*]\s+/, ''))}</li>`;
+    } else {
+      closeList();
+      html += `<p>${inlineFmt(l)}</p>`;
+    }
+  });
+  closeList();
+  return html || '<p class="na">（空）empty</p>';
+}
+
+async function initInsightsPanel(meta) {
+  const panel = document.getElementById('insightsPanel');
+  if (!panel) return;
+  if (!meta.report_id) { panel.style.display = 'none'; return; }
+  panel.style.display = 'block';
+  const sel = document.getElementById('insightsProvider');
+  const btn = document.getElementById('btn-generate-insights');
+  const status = document.getElementById('insightsStatus');
+  const out = document.getElementById('insightsOutput');
+
+  let providersInfo = null;
+  try {
+    const resp = await fetch(API_BASE + 'insights/providers', { headers: authHeaders() });
+    if (resp.ok) providersInfo = await resp.json();
+  } catch (e) { /* backend unreachable — leave the select as-is, generate will just fail with a clear error */ }
+
+  sel.innerHTML = '';
+  if (providersInfo) {
+    Object.entries(providersInfo.providers).forEach(([key, p]) => {
+      const opt = document.createElement('option');
+      opt.value = key;
+      opt.textContent = p.label + (p.configured ? '' : '（未配置 not configured）');
+      if (key === providersInfo.default) opt.selected = true;
+      sel.appendChild(opt);
+    });
+  } else {
+    ['claude', 'gemini', 'openai'].forEach(key => { const opt = document.createElement('option'); opt.value = key; opt.textContent = key; sel.appendChild(opt); });
+  }
+
+  if (meta.cachedInsights) {
+    out.innerHTML = renderMarkdownLite(meta.cachedInsights);
+    status.textContent = `已缓存 cached · ${meta.cachedInsightsProvider || ''}`;
+    if (meta.cachedInsightsProvider) sel.value = meta.cachedInsightsProvider;
+  } else {
+    out.innerHTML = '<p class="na">点击"生成洞察"——AI会读取本报告的所有数据，给出结论先行、有数据支撑的麦肯锡式分析。<span style="display:block;">Click "Generate insights" — the AI reads this report\'s full data and writes a conclusion-first, fact-based narrative in the McKinsey house style.</span></p>';
+    status.textContent = '';
+  }
+
+  btn.onclick = async () => {
+    const provider = sel.value;
+    btn.disabled = true;
+    status.textContent = '生成中…可能需要几十秒 Generating… may take up to a minute';
+    out.style.opacity = '0.5';
+    try {
+      const resp = await fetch(`${API_BASE}reports/${meta.report_id}/insights?provider=${encodeURIComponent(provider)}&force=true`,
+        { method: 'POST', headers: authHeaders() });
+      if (resp.status === 401) { showLoginGate(); throw new Error('请先登录 / Please log in'); }
+      const body = await resp.json();
+      if (!resp.ok) throw new Error(body.detail || 'Generation failed');
+      out.innerHTML = renderMarkdownLite(body.insights);
+      status.textContent = `由 ${body.provider} 生成 · generated via ${body.provider}`;
+    } catch (e) {
+      status.textContent = '';
+      out.innerHTML = `<div class="msg error">生成失败 / Generation failed: ${e.message}</div>`;
+    } finally {
+      btn.disabled = false;
+      out.style.opacity = '1';
+    }
+  };
 }
 
 function buildReportSkeleton(D, meta = {}) {
@@ -803,6 +1075,16 @@ function buildReportSkeleton(D, meta = {}) {
   </p>` : '';
   return `
   ${metaLine}
+  <div class="panel insights-panel" id="insightsPanel" style="display:none;">
+    <h3>AI 洞察 <span class="cn">AI-generated insights — 结论先行 / conclusion first</span></h3>
+    <div class="insights-controls">
+      <select id="insightsProvider"><option value="">…</option></select>
+      <button class="primary" id="btn-generate-insights" type="button">生成洞察 Generate insights</button>
+      <span id="insightsStatus" class="insights-status"></span>
+    </div>
+    <div id="insightsOutput" class="insights-output"><p class="na">点击"生成洞察"——AI会读取本报告的所有数据，给出结论先行、有数据支撑的麦肯锡式分析。<span style="display:block;">Click "Generate insights" — the AI reads this report's full data and writes a conclusion-first, fact-based narrative in the McKinsey house style.</span></p></div>
+  </div>
+
   <div class="kpirow" id="kpiRow"></div>
   <div id="warnNote" class="msg error" style="display:none;"></div>
 
