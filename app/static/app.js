@@ -38,15 +38,14 @@ function showMsg(text, kind = "info") {
   if (kind !== "error") setTimeout(() => { box.innerHTML = ""; }, 6000);
 }
 
-/* ---------------- auth: lightweight username(+optional password) login ----------------
-   Not a real security system — see the copy on the login card. First login
-   for a given username creates the account with whatever password was
-   given; later logins with that username must match it. The token is kept
+/* ---------------- auth: administrator-provisioned accounts ----------------
+   Accounts are created only by the administrator. The token is kept
    in localStorage and sent as an Authorization: Bearer header on every
    API call that needs an identity (upload, history). */
 const AUTH_TOKEN_KEY = "crna_token";
 const AUTH_USER_KEY = "crna_username";
 let currentUser = null;
+let currentUserIsAdmin = false;
 
 function authHeaders() {
   const token = localStorage.getItem(AUTH_TOKEN_KEY);
@@ -60,6 +59,7 @@ function hideLoginGate() {
   document.getElementById("loginGate").style.display = "none";
   document.getElementById("userbar").hidden = false;
   document.getElementById("userbarName").textContent = currentUser || "";
+  document.getElementById("btn-manage-users").hidden = !currentUserIsAdmin;
 }
 async function checkAuth() {
   const token = localStorage.getItem(AUTH_TOKEN_KEY);
@@ -69,6 +69,7 @@ async function checkAuth() {
     if (!resp.ok) throw new Error("invalid session");
     const body = await resp.json();
     currentUser = body.username;
+    currentUserIsAdmin = !!body.is_admin;
     hideLoginGate();
   } catch (e) {
     localStorage.removeItem(AUTH_TOKEN_KEY);
@@ -81,7 +82,7 @@ document.getElementById("btn-login").addEventListener("click", async () => {
   const password = document.getElementById("f-login-pass").value;
   const errBox = document.getElementById("loginError");
   errBox.style.display = "none";
-  if (!username) { errBox.textContent = "请输入用户名 / Username is required"; errBox.style.display = "block"; return; }
+  if (!username || !password) { errBox.textContent = "请输入用户名和密码 / Username and password are required"; errBox.style.display = "block"; return; }
   try {
     const fd = new FormData();
     fd.append("username", username);
@@ -92,13 +93,36 @@ document.getElementById("btn-login").addEventListener("click", async () => {
     localStorage.setItem(AUTH_TOKEN_KEY, body.token);
     localStorage.setItem(AUTH_USER_KEY, body.username);
     currentUser = body.username;
-    hideLoginGate();
+    await checkAuth();
   } catch (e) {
     errBox.textContent = "登录失败 / " + e.message;
     errBox.style.display = "block";
   }
 });
 document.getElementById("f-login-pass").addEventListener("keydown", e => { if (e.key === "Enter") document.getElementById("btn-login").click(); });
+
+document.getElementById("btn-manage-users").addEventListener("click", () => {
+  document.getElementById("f-new-user").value = "";
+  document.getElementById("f-new-pass").value = "";
+  document.getElementById("userModalMsg").style.display = "none";
+  document.getElementById("userModal").hidden = false;
+});
+document.getElementById("btn-user-cancel").addEventListener("click", () => { document.getElementById("userModal").hidden = true; });
+document.getElementById("btn-user-create").addEventListener("click", async () => {
+  const username = document.getElementById("f-new-user").value.trim();
+  const password = document.getElementById("f-new-pass").value;
+  const msg = document.getElementById("userModalMsg");
+  msg.style.display = "none";
+  if (!username || !password) { msg.className = "msg error"; msg.textContent = "请输入用户名和密码 / Username and password are required"; msg.style.display = "block"; return; }
+  const fd = new FormData(); fd.append("username", username); fd.append("password", password);
+  try {
+    const resp = await fetch(API_BASE + "auth/users", { method: "POST", headers: authHeaders(), body: fd });
+    const body = await resp.json();
+    if (!resp.ok) throw new Error(body.detail || "Account creation failed");
+    msg.className = "msg ok"; msg.textContent = `账号 ${body.username} 已创建 / Account created`; msg.style.display = "block";
+    document.getElementById("f-new-user").value = ""; document.getElementById("f-new-pass").value = "";
+  } catch (e) { msg.className = "msg error"; msg.textContent = "创建失败 / " + e.message; msg.style.display = "block"; }
+});
 
 /* ---------------- generic confirm modal (Promise-based) ---------------- */
 function showConfirm(titleHtml, bodyHtml, okLabel = "继续 Continue") {
@@ -120,6 +144,7 @@ document.getElementById("btn-logout").addEventListener("click", async () => {
   localStorage.removeItem(AUTH_TOKEN_KEY);
   localStorage.removeItem(AUTH_USER_KEY);
   currentUser = null;
+  currentUserIsAdmin = false;
   showLoginGate();
 });
 checkAuth();
