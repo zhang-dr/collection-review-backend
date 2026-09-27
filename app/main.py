@@ -1,5 +1,4 @@
 import json
-import os
 from pathlib import Path
 from typing import Optional
 
@@ -17,7 +16,6 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 db.init_db()
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
-ADMIN_USERNAME = os.environ.get("ADMIN_USERNAME", "Xihao")
 
 
 def _token_from_header(authorization: str | None) -> str | None:
@@ -36,14 +34,8 @@ def require_user(authorization: str | None = Header(None)) -> dict:
 
 
 def require_admin(user: dict = Depends(require_user)) -> dict:
-    if user["username"] != ADMIN_USERNAME:
-        raise HTTPException(status_code=403, detail="Administrator access required / 仅管理员可操作")
-    return user
-
-
-def require_ai_access(user: dict = Depends(require_user)) -> dict:
-    if user["username"] != ADMIN_USERNAME and not bool(user.get("can_use_ai")):
-        raise HTTPException(status_code=403, detail="AI access has not been enabled for this account / 此账号未开通AI权限")
+    if not auth.is_admin(user):
+        raise HTTPException(status_code=403, detail=f"仅管理员 {auth.ADMIN_USERNAME} 可操作 / Admin ({auth.ADMIN_USERNAME}) only")
     return user
 
 
@@ -53,13 +45,15 @@ def health():
 
 
 # ---------------------------------------------------------------------------
-# Auth — existing accounts may log in; only the administrator can create users.
+# Auth — lightweight username(+optional password) login. First login for a
+# username creates the account; later logins with that username must match
+# the same password.
 # ---------------------------------------------------------------------------
 
 @app.post("/api/auth/login")
-def api_login(username: str = Form(...), password: str = Form(...)):
+def api_login(username: str = Form(...), password: str = Form("")):
     try:
-        result = auth.login(username, password)
+        result = auth.login_or_register(username, password)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except PermissionError as e:
@@ -77,39 +71,34 @@ def api_logout(authorization: str | None = Header(None)):
 
 @app.get("/api/auth/me")
 def api_me(user: dict = Depends(require_user)):
-    is_admin = user["username"] == ADMIN_USERNAME
-    return {"username": user["username"], "is_admin": is_admin,
-            "can_use_ai": is_admin or bool(user.get("can_use_ai"))}
+    return {"username": user["username"], "is_admin": auth.is_admin(user), "ai_allowed": auth.ai_allowed(user)}
 
 
-@app.post("/api/auth/users")
-def api_create_user(username: str = Form(...), password: str = Form(...),
-                    admin: dict = Depends(require_admin)):
-    try:
-        user = auth.register_user(username, password)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    return {"username": user["username"], "created": True}
-
+# ---------------------------------------------------------------------------
+# Admin — account creation is no longer self-service (see auth.py). Only the
+# hardcoded admin username can create accounts or grant/revoke per-account
+# AI-insights access, since that's the one thing here that costs real money.
+# ---------------------------------------------------------------------------
 
 @app.get("/api/admin/users")
-def api_list_users(admin: dict = Depends(require_admin)):
-    return [{"id": u["id"], "username": u["username"],
-             "can_use_ai": u["username"] == ADMIN_USERNAME or bool(u["can_use_ai"]),
-             "is_admin": u["username"] == ADMIN_USERNAME} for u in db.list_users()]
+def api_admin_list_users(admin: dict = Depends(require_admin)):
+    return db.list_users()
 
 
-@app.post("/api/admin/users/{user_id}/ai-access")
-def api_set_user_ai_access(user_id: int, allowed: bool = Form(...),
-                           admin: dict = Depends(require_admin)):
-    users = {u["id"]: u for u in db.list_users()}
-    target = users.get(user_id)
-    if target is None:
+@app.post("/api/admin/users")
+def api_admin_create_user(username: str = Form(...), password: str = Form(""), admin: dict = Depends(require_admin)):
+    try:
+        return auth.admin_create_user(username, password)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/admin/users/{username}/ai-access")
+def api_admin_set_ai_access(username: str, allowed: bool = Form(...), admin: dict = Depends(require_admin)):
+    ok = db.set_ai_allowed(username, allowed)
+    if not ok:
         raise HTTPException(status_code=404, detail="User not found")
-    if target["username"] == ADMIN_USERNAME and not allowed:
-        raise HTTPException(status_code=400, detail="Administrator AI access cannot be disabled")
-    db.set_user_ai_access(user_id, allowed)
-    return {"username": target["username"], "can_use_ai": bool(allowed)}
+    return {"username": username, "ai_allowed": allowed}
 
 
 @app.get("/api/admin/ai-settings")
@@ -242,7 +231,13 @@ def api_insights_providers(user: dict = Depends(require_user)):
 
 @app.post("/api/reports/{report_id}/insights")
 def api_generate_insights(report_id: int, provider: Optional[str] = None, model: Optional[str] = None,
-                           force: bool = False, user: dict = Depends(require_ai_access)):
+                           force: bool = False, user: dict = Depends(require_user)):
+    if not auth.ai_allowed(user):
+        raise HTTPException(
+            status_code=403,
+            detail=f"您的账号未获得AI功能授权，请联系管理员 {auth.ADMIN_USERNAME} 开通。"
+                   f" / Your account is not authorized to use AI insights — ask admin {auth.ADMIN_USERNAME} to enable it.",
+        )
     r = db.get_report(report_id)
     if r is None:
         raise HTTPException(status_code=404, detail="Report not found")
