@@ -1195,7 +1195,7 @@ async function initInsightsPanel(meta) {
     status.textContent = `已缓存 cached · ${meta.cachedInsightsProvider || ''}`;
     if (meta.cachedInsightsProvider) sel.value = meta.cachedInsightsProvider;
   } else {
-    out.innerHTML = '<p class="na">点击"生成洞察"——AI会读取本报告的所有数据，给出结论先行、有数据支撑的麦肯锡式分析。<span style="display:block;">Click "Generate insights" — the AI reads this report\'s full data and writes a conclusion-first, fact-based narrative in the McKinsey house style.</span></p>';
+    out.innerHTML = '<p class="na">点击"生成洞察"——AI会读取本报告的所有数据，按 Data → Insight → So what → Now what 的方法论把各模块发现综合成结论先行、有数据支撑的分析，而不是逐条复述图表上已有的数字。<span style="display:block;">Click "Generate insights" — the AI reads this report\'s full data and applies the Data → Insight → So what → Now what methodology to synthesize findings across modules into a conclusion-first, fact-based narrative, rather than restating numbers already visible on the charts.</span></p>';
     status.textContent = '';
   }
 
@@ -1256,13 +1256,13 @@ function buildReportSkeleton(D, meta = {}) {
   return `
   ${metaLine}
   <div class="panel insights-panel" id="insightsPanel" style="display:none;">
-    <h3>AI 洞察 <span class="cn">AI-generated insights — 结论先行 / conclusion first</span></h3>
+    <h3>AI 洞察 <span class="cn">基于Xihao数据分析方法论框架生成的AI数据分析 / AI data analysis generated with Xihao's data-analysis methodology framework</span></h3>
     <div class="insights-controls">
       <select id="insightsProvider"><option value="">…</option></select>
       <button class="primary" id="btn-generate-insights" type="button">生成洞察 Generate insights</button>
       <span id="insightsStatus" class="insights-status"></span>
     </div>
-    <div id="insightsOutput" class="insights-output"><p class="na">点击"生成洞察"——AI会读取本报告的所有数据，给出结论先行、有数据支撑的麦肯锡式分析。<span style="display:block;">Click "Generate insights" — the AI reads this report's full data and writes a conclusion-first, fact-based narrative in the McKinsey house style.</span></p></div>
+    <div id="insightsOutput" class="insights-output"><p class="na">点击"生成洞察"——AI会读取本报告的所有数据，按 Data → Insight → So what → Now what 的方法论把各模块发现综合成结论先行、有数据支撑的分析，而不是逐条复述图表上已有的数字。<span style="display:block;">Click "Generate insights" — the AI reads this report's full data and applies the Data → Insight → So what → Now what methodology to synthesize findings across modules into a conclusion-first, fact-based narrative, rather than restating numbers already visible on the charts.</span></p></div>
   </div>
 
   <div class="kpirow" id="kpiRow"></div>
