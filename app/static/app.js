@@ -106,6 +106,34 @@ document.getElementById("btn-manage-users").addEventListener("click", () => {
   document.getElementById("f-new-pass").value = "";
   document.getElementById("userModalMsg").style.display = "none";
   document.getElementById("userModal").hidden = false;
+  loadAiSettings();
+});
+
+async function loadAiSettings() {
+  const status = document.getElementById("aiSettingsStatus");
+  try {
+    const resp = await fetch(API_BASE + "admin/ai-settings", { headers: authHeaders() });
+    const body = await resp.json();
+    if (!resp.ok) throw new Error(body.detail || "Could not load AI settings");
+    document.getElementById("f-ai-provider").value = body.default || "openai";
+    const configured = Object.entries(body.providers || {}).filter(([, v]) => v.configured).map(([, v]) => v.label);
+    status.textContent = configured.length ? `已配置 / Configured: ${configured.join(", ")}` : "尚未配置 AI 服务 / No AI provider configured";
+  } catch (e) { status.textContent = "读取配置失败 / " + e.message; }
+}
+document.getElementById("btn-ai-save").addEventListener("click", async () => {
+  const provider = document.getElementById("f-ai-provider").value;
+  const apiKey = document.getElementById("f-ai-key").value.trim();
+  const model = document.getElementById("f-ai-model").value.trim();
+  const status = document.getElementById("aiSettingsStatus");
+  if (!apiKey) { status.textContent = "请输入新的 API 密钥 / Enter a new API key"; return; }
+  const fd = new FormData(); fd.append("provider", provider); fd.append("api_key", apiKey); fd.append("model", model);
+  try {
+    const resp = await fetch(API_BASE + "admin/ai-settings", { method: "POST", headers: authHeaders(), body: fd });
+    const body = await resp.json();
+    if (!resp.ok) throw new Error(body.detail || "Could not save settings");
+    document.getElementById("f-ai-key").value = "";
+    status.textContent = `${provider} 已配置 / configured`;
+  } catch (e) { status.textContent = "保存失败 / " + e.message; }
 });
 document.getElementById("btn-user-cancel").addEventListener("click", () => { document.getElementById("userModal").hidden = true; });
 document.getElementById("btn-user-create").addEventListener("click", async () => {
